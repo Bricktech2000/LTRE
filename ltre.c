@@ -36,6 +36,7 @@ void nfa_state_free(struct nfa_state *state) {
   for (int chr = 0; chr < 256; chr++)
     nfa_state_ll_free(state->transitions[chr], false);
   nfa_state_ll_free(state->epsilon, false);
+  free(state);
 }
 
 void nfa_state_ll_free(struct nfa_state_ll *ll, bool owns_state) {
@@ -48,16 +49,17 @@ void nfa_state_ll_free(struct nfa_state_ll *ll, bool owns_state) {
   }
 }
 
-void nfa_state_ll_ll_free(struct nfa_state_ll_ll *ll_ll, bool owns_state,
-                          bool owns_ll, bool owns_ll_state) {
+void nfa_state_ll_ll_free(struct nfa_state_ll_ll *ll_ll, bool owns_ll,
+                          bool owns_ll_state) {
+  // will NOT free `ll_ll->state`s
+
   assert(!owns_ll_state || owns_ll); // owns_ll_state implies owns_ll
 
   while (ll_ll) {
     struct nfa_state_ll_ll *next = ll_ll->next;
     if (owns_ll)
       nfa_state_ll_free(ll_ll->ll, owns_ll_state);
-    if (owns_state)
-      nfa_state_free(ll_ll->state);
+    (void)ll_ll->state; // do not free
     free(ll_ll);
     ll_ll = next;
   }
@@ -351,6 +353,7 @@ struct dfa dfa_from_nfa(struct nfa nfa) {
           for (struct nfa_state_ll *ll = chr_closure; ll; ll = ll->next)
             if (!nfa_state_ll_get(transition_union, ll->state))
               nfa_state_ll_prepend(&transition_union, ll->state);
+          nfa_state_ll_free(chr_closure, false);
         }
 
         // if the metastate formed by the union of transitions already exists
@@ -361,8 +364,8 @@ struct dfa dfa_from_nfa(struct nfa nfa) {
         if (existing_metastate != (void *)-1)
           nfa_state_ll_free(transition_union, false);
         else
-          nfa_state_ll_ll_prepend(&metastates, transition_union),
-              existing_metastate = transition_union;
+          nfa_state_ll_ll_prepend(&metastates,
+                                  existing_metastate = transition_union);
 
         // build transition to the metastate
         assert(ll_ll->state->transitions[chr] == NULL); // sanity check
@@ -400,7 +403,16 @@ struct dfa dfa_from_nfa(struct nfa nfa) {
     }
   }
 
+  // `metastates` owns its states shallowly; it doesn't own the states'
+  // `transitions` linked list or `epsilon` linked list. that's because, at this
+  // stage, a `transitions` linked list is actually a pointer to some other
+  // existing metastate. therefore, perform a manual shallow `free` here
+  for (struct nfa_state_ll_ll *ll_ll = metastates; ll_ll; ll_ll = ll_ll->next)
+    free(ll_ll->state);
+
+  nfa_state_ll_ll_free(metastates, true, false);
   nfa_free(nfa);
+
   return dfa;
 }
 
