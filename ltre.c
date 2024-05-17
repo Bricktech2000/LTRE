@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define INITIAL 0 // initial state
+#define INITIAL 0 // DFA initial state
 
 struct nfa_state {
   struct nfa_state_ll *transitions[256];
@@ -11,22 +11,24 @@ struct nfa_state {
   bool accepting;
 };
 
+// set of states
 struct nfa_state_ll {
   struct nfa_state_ll *next;
   struct nfa_state *state;
-  int size;
+  int len;
 };
 
 struct nfa {
   struct nfa_state *initial;
-  struct nfa_state_ll *states; // owns all states
+  struct nfa_state_ll *states; // owns all states. anything else borrows
 };
 
+// set of sets of states (set of metastates)
 struct nfa_state_ll_ll {
   struct nfa_state_ll_ll *next;
   struct nfa_state_ll *ll;
-  struct nfa_state *state; // TODO document set for powerset construction
-  int size;
+  struct nfa_state *state; // for powerset construction
+  int len;
 };
 
 void nfa_state_ll_free(struct nfa_state_ll *ll, bool owns_state);
@@ -76,8 +78,8 @@ void nfa_state_ll_prepend(struct nfa_state_ll **ll, struct nfa_state *state) {
   struct nfa_state_ll *new = malloc(sizeof(struct nfa_state_ll));
   new->state = state;
   new->next = *ll;
-  new->size = *ll ? (*ll)->size : 0;
-  new->size++;
+  new->len = *ll ? (*ll)->len : 0;
+  new->len++;
   *ll = new;
 }
 
@@ -92,9 +94,9 @@ void nfa_state_ll_ll_prepend(struct nfa_state_ll_ll **ll_ll,
   struct nfa_state_ll_ll *new = malloc(sizeof(struct nfa_state_ll_ll));
   new->ll = ll;
   new->next = *ll_ll;
-  new->state = NULL; // TODO document (?)
-  new->size = *ll_ll ? (*ll_ll)->size : 0;
-  new->size++;
+  new->state = NULL; // to be assigned during powerset construction
+  new->len = *ll_ll ? (*ll_ll)->len : 0;
+  new->len++;
   *ll_ll = new;
 }
 
@@ -106,7 +108,7 @@ struct nfa_state_ll_ll *nfa_state_ll_ll_alloc(struct nfa_state_ll *ll) {
 
 struct nfa_state *nfa_state_ll_get(struct nfa_state_ll *ll,
                                    struct nfa_state *state) {
-  // shallow
+  // shallow. returns first match
   for (; ll; ll = ll->next)
     if (ll->state == state)
       return ll->state;
@@ -117,8 +119,8 @@ struct nfa_state *nfa_state_ll_get(struct nfa_state_ll *ll,
 bool nfa_state_ll_seteq(struct nfa_state_ll *ll1, struct nfa_state_ll *ll2) {
   // shallow. assumes no duplicates
 
-  int ll1_size = ll1 ? ll1->size : 0;
-  int ll2_size = ll2 ? ll2->size : 0;
+  int ll1_size = ll1 ? ll1->len : 0;
+  int ll2_size = ll2 ? ll2->len : 0;
 
   if (ll1_size != ll2_size)
     return false;
@@ -138,13 +140,12 @@ bool nfa_state_ll_seteq(struct nfa_state_ll *ll1, struct nfa_state_ll *ll2) {
 
 struct nfa_state_ll *nfa_state_ll_ll_get(struct nfa_state_ll_ll *ll_ll,
                                          struct nfa_state_ll *ll) {
-  // TODO rephrase
   // deep for ll but shallow for state. assumes no duplicates in ll
   for (; ll_ll; ll_ll = ll_ll->next)
     if (nfa_state_ll_seteq(ll_ll->ll, ll))
       return ll_ll->ll;
 
-  // TODO document `0` is empty linked list
+  // `NULL` is an empty linked list, so we use `-1` to indicate not found
   return (void *)-1;
 }
 
@@ -185,6 +186,7 @@ void dfa_dump(struct dfa dfa) {
         goto close_off;
       *bufp = '\0';
 
+      // don't print empty transitions
       if (buf == bufp)
         continue;
 
@@ -200,6 +202,8 @@ void dfa_free(struct dfa dfa) {
 }
 
 struct nfa_state_ll *nfa_state_epsilon_closure(struct nfa_state *state) {
+  // depth-first epsilon closure
+
   struct nfa_state_ll *epsilon_closure = NULL;
   struct nfa_state_ll *top = nfa_state_ll_alloc(state);
 
@@ -223,6 +227,8 @@ struct nfa_state_ll *nfa_state_epsilon_closure(struct nfa_state *state) {
 
 struct nfa_state_ll *nfa_state_chr_closure(struct nfa_state *state,
                                            uint8_t chr) {
+  // `chr`-then-epsilon closure
+
   struct nfa_state_ll *chr_closure = NULL;
 
   for (struct nfa_state_ll *ll = state->transitions[chr]; ll; ll = ll->next) {
@@ -249,7 +255,7 @@ struct nfa nfa_from_pattern(char *pattern) {
   // nfa_state_ll_prepend(&nfa.states, state2);
   // struct nfa_state *state3 = nfa_state_alloc();
   // nfa_state_ll_prepend(&nfa.states, state3);
-
+  //
   // nfa_state_ll_prepend(&state0->epsilon, state1);
   // nfa_state_ll_prepend(&state1->transitions['a'], state1);
   // nfa_state_ll_prepend(&state1->transitions['a'], state2);
@@ -285,7 +291,7 @@ struct nfa nfa_from_pattern(char *pattern) {
   // nfa_state_ll_prepend(&nfa.states, state0);
   // struct nfa_state *state1 = nfa_state_alloc();
   // nfa_state_ll_prepend(&nfa.states, state1);
-
+  //
   // nfa_state_ll_prepend(&state0->transitions['b'], state1);
   // nfa_state_ll_prepend(&state0->transitions['c'], state1);
   // nfa_state_ll_prepend(&state1->transitions['d'], state0);
@@ -311,77 +317,90 @@ struct dfa dfa_random(dfa_state_t size) {
 }
 
 struct dfa dfa_from_nfa(struct nfa nfa) {
-  // powerset construction
+  // powerset construction. time complexity is probably cubic or quartic in the
+  // number of states, but that's fine for now
 
-  struct nfa_state_ll_ll *new_states =
+  struct nfa_state_ll_ll *metastates =
       nfa_state_ll_ll_alloc(nfa_state_epsilon_closure(nfa.initial));
 
-  // TODO inefficient
+  // dangerously modify the metastates linked list while iterating over it. for
+  // every metastate, for every possible input character, compute the set of all
+  // states we could reach by consuming that character. turn that set of states
+  // into a metastate and add it to `metastates`. blindly repeat until we run
+  // out of new metastates to create
   for (bool done = false; !done;) {
     done = true;
-    for (struct nfa_state_ll_ll *ll_ll = new_states; ll_ll;
+    for (struct nfa_state_ll_ll *ll_ll = metastates; ll_ll;
          ll_ll = ll_ll->next) {
-      // TODO document `state` of new_states
+      // we've assigned this metastate a state already and therefore to all
+      // subsequent ones too, hopefully
       if (ll_ll->state)
-        continue;
+        break;
       ll_ll->state = nfa_state_alloc();
       done = false;
 
       for (int chr = 0; chr < 256; chr++) {
-        struct nfa_state_ll *union_ = NULL; // TODO better name
-        bool accepting = false;
+        struct nfa_state_ll *transition_union = NULL;
+        bool accepting_union = false;
 
+        // union of transitions and accepting states
         for (struct nfa_state_ll *ll = ll_ll->ll; ll; ll = ll->next) {
-          accepting |= ll->state->accepting;
-          struct nfa_state_ll *closure = nfa_state_chr_closure(ll->state, chr);
-          for (struct nfa_state_ll *ll = closure; ll; ll = ll->next)
-            if (!nfa_state_ll_get(union_, ll->state))
-              nfa_state_ll_prepend(&union_, ll->state);
+          accepting_union |= ll->state->accepting;
+          struct nfa_state_ll *chr_closure =
+              nfa_state_chr_closure(ll->state, chr);
+          for (struct nfa_state_ll *ll = chr_closure; ll; ll = ll->next)
+            if (!nfa_state_ll_get(transition_union, ll->state))
+              nfa_state_ll_prepend(&transition_union, ll->state);
         }
 
-        struct nfa_state_ll *closure = nfa_state_ll_ll_get(new_states, union_);
-        if (closure != (void *)-1)
-          nfa_state_ll_free(union_, false);
+        // if the metastate formed by the union of transitions already exists
+        // in `metastates`, point to it. this is necessary because we perform
+        // shallow comparisons later
+        struct nfa_state_ll *existing_metastate =
+            nfa_state_ll_ll_get(metastates, transition_union);
+        if (existing_metastate != (void *)-1)
+          nfa_state_ll_free(transition_union, false);
         else
-          nfa_state_ll_ll_prepend(&new_states, union_), closure = union_;
+          nfa_state_ll_ll_prepend(&metastates, transition_union),
+              existing_metastate = transition_union;
 
-        // TODO document `state` of new_states
-        assert(ll_ll->state->transitions[chr] == NULL); // TODO document why
-        ll_ll->state->transitions[chr] = closure;
-        ll_ll->state->accepting = accepting;
+        // build transition to the metastate
+        assert(ll_ll->state->transitions[chr] == NULL); // sanity check
+        ll_ll->state->transitions[chr] = existing_metastate;
+        ll_ll->state->accepting = accepting_union;
       }
     }
   }
 
-  struct dfa dfa = {.size = new_states->size};
+  struct dfa dfa = {.size = metastates->len};
   dfa.transitions = malloc(sizeof(dfa_state_t[256]) * dfa.size);
   dfa.accepting = malloc(sizeof(bool) * dfa.size);
-  for (struct nfa_state_ll_ll *ll_ll = new_states; ll_ll; ll_ll = ll_ll->next) {
-    assert(ll_ll->state->epsilon == NULL);
-    // TODO document so initial is INITIAL
-    int i = ll_ll->size - 1;
 
+  for (struct nfa_state_ll_ll *ll_ll = metastates; ll_ll; ll_ll = ll_ll->next) {
+    assert(ll_ll->state->epsilon == NULL);
+
+    // funny indexes to ensure `nfa.initial` matches with
+    // `dfa.transitions[INITIAL]`
+    int i = ll_ll->len - 1;
     if (i == INITIAL)
-      assert(ll_ll->size == 1);
+      assert(ll_ll->len == 1);
 
     dfa.accepting[i] = ll_ll->state->accepting;
 
     for (int chr = 0; chr < 256; chr++) {
       struct nfa_state_ll *ll = ll_ll->state->transitions[chr];
 
-      // TODO document locate idx
+      // replace pointers to metastates for indices within `dfa.transitions`
       dfa.transitions[i][chr] = -1;
-      for (struct nfa_state_ll_ll *ll_ll = new_states; ll_ll;
+      for (struct nfa_state_ll_ll *ll_ll = metastates; ll_ll;
            ll_ll = ll_ll->next)
         if (ll_ll->ll == ll) // shallow
-          dfa.transitions[i][chr] = ll_ll->size - 1;
+          dfa.transitions[i][chr] = ll_ll->len - 1;
       assert(dfa.transitions[i][chr] != -1);
     }
   }
 
-  // struct dfa dfa = dfa_random(4);
   nfa_free(nfa);
-  dfa_dump(dfa);
   return dfa;
 }
 
@@ -392,6 +411,7 @@ struct dfa ltre_compile(char *pattern) {
 }
 
 bool ltre_matches(struct dfa dfa, uint8_t *input) {
+  // time linear in the input length :)
   dfa_state_t state = INITIAL;
   for (; *input; input++)
     state = dfa.transitions[state][*input];
