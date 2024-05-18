@@ -2,13 +2,14 @@
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
-#define INITIAL 0 // DFA initial state
+#define INITIAL 0                 // DFA initial state
+#define METACHARS "\\.^$*+?[]()|" // for parser
 
 struct nfa_state {
   struct nfa_state_ll *transitions[256];
   struct nfa_state_ll *epsilon;
-  bool accepting;
 };
 
 // set of states
@@ -18,8 +19,12 @@ struct nfa_state_ll {
   int len;
 };
 
+// we support epsilon transitions and therefore can assume NFAs have a unique
+// final state without loss of generality. allows us to reuse this struct for
+// the regular expression parser
 struct nfa {
   struct nfa_state *initial;
+  struct nfa_state *final;
   struct nfa_state_ll *states; // owns all states. anything else borrows
 };
 
@@ -27,7 +32,7 @@ struct nfa {
 struct nfa_state_ll_ll {
   struct nfa_state_ll_ll *next;
   struct nfa_state_ll *ll;
-  struct nfa_state *state; // for powerset construction
+  struct nfa_state *state; // bodged in, for powerset construction
   int len;
 };
 
@@ -65,14 +70,11 @@ void nfa_state_ll_ll_free(struct nfa_state_ll_ll *ll_ll, bool owns_ll,
   }
 }
 
-void nfa_free(struct nfa nfa) { nfa_state_ll_free(nfa.states, true); }
-
 struct nfa_state *nfa_state_alloc(void) {
   struct nfa_state *state = malloc(sizeof(struct nfa_state));
   for (int chr = 0; chr < 256; chr++)
     state->transitions[chr] = NULL;
   state->epsilon = NULL;
-  state->accepting = false;
   return state;
 }
 
@@ -83,6 +85,18 @@ void nfa_state_ll_prepend(struct nfa_state_ll **ll, struct nfa_state *state) {
   new->len = *ll ? (*ll)->len : 0;
   new->len++;
   *ll = new;
+}
+
+void nfa_state_ll_join(struct nfa_state_ll **ll, struct nfa_state_ll *other) {
+  // reverses order of `other`. moves out of `other`
+  while (other) {
+    struct nfa_state_ll *next = other->next;
+    other->next = *ll;
+    other->len = *ll ? (*ll)->len : 0;
+    other->len++;
+    *ll = other;
+    other = next;
+  }
 }
 
 struct nfa_state_ll *nfa_state_ll_alloc(struct nfa_state *state) {
@@ -203,6 +217,310 @@ void dfa_free(struct dfa dfa) {
   free(dfa.transitions);
 }
 
+// some invariants parsers on `error`:
+// - the NFA returned shall be null
+// - `input` shall point to the error location
+// - the caller is responsible for backtracking if necessary
+
+uint8_t parse_literal(char **input, char **error);
+struct nfa parse_class(char **input, char **error) {
+  struct nfa lits = {.initial = nfa_state_alloc(), .final = nfa_state_alloc()};
+  nfa_state_ll_prepend(&lits.states, lits.initial);
+  nfa_state_ll_prepend(&lits.states, lits.final);
+
+  bool invert = false;
+  if (**input == '^') {
+    ++*input;
+    invert = true;
+  }
+
+  char *last_input = *input;
+  while (1) {
+    last_input = *input;
+    uint8_t begin = parse_literal(input, error);
+    if (*error)
+      break;
+
+    uint8_t end = begin;
+    if (**input == '-') {
+      ++*input;
+      end = parse_literal(input, error);
+      if (!*error && begin > end)
+        *error = "invalid range";
+      if (*error) {
+        nfa_state_ll_free(lits.states, true);
+        return (struct nfa){0};
+      }
+    }
+
+    for (int chr = begin; chr <= end; chr++)
+      nfa_state_ll_prepend(&lits.initial->transitions[chr], lits.final);
+  }
+  if (strchr("]", *last_input)) { // hacky lookahead for better diagnostics
+    // backtrack
+    *input = last_input;
+    *error = NULL;
+  }
+  if (*error) {
+    nfa_state_ll_free(lits.states, true);
+    return (struct nfa){0};
+  }
+
+  if (invert) {
+    for (int chr = 0; chr < 256; chr++)
+      if (lits.initial->transitions[chr])
+        // more performant than `nfa_state_ll_free(..., false);` because
+        // we know `next` is `NULL`
+        free(lits.initial->transitions[chr]),
+            lits.initial->transitions[chr] = NULL;
+      else
+        nfa_state_ll_prepend(&lits.initial->transitions[chr], lits.final);
+  }
+
+  return lits;
+}
+
+uint8_t parse_hexbyte(char **input, char **error) {
+  uint8_t byte = 0;
+  for (int i = 0; i < 2; i++, byte <<= 4) {
+    uint8_t chr = **input;
+    if (chr >= '0' && chr <= '9')
+      byte |= chr - '0';
+    else if (chr >= 'a' && chr <= 'f')
+      byte |= chr - 'a' + 10;
+    else if (chr >= 'A' && chr <= 'F')
+      byte |= chr - 'A' + 10;
+    else {
+      *error = "expected hex digit";
+      return 0;
+    }
+    ++*input;
+  }
+  return byte;
+}
+
+uint8_t parse_escaped(char **input, char **error) {
+  switch (*(*input)++) {
+  case 'a':
+    return '\a';
+  case 'b':
+    return '\b';
+  case 'f':
+    return '\f';
+  case 'n':
+    return '\n';
+  case 'r':
+    return '\r';
+  case 't':
+    return '\t';
+  case 'v':
+    return '\v';
+  case 'x':;
+    uint8_t chr = parse_hexbyte(input, error);
+    if (*error)
+      return chr;
+    return chr;
+  default:
+    if (strchr(METACHARS, *(*input - 1)))
+      return *(*input - 1);
+  }
+  *error = "unknown escape sequence";
+  return 0;
+}
+
+uint8_t parse_literal(char **input, char **error) {
+  if (**input == '\\') {
+    ++*input;
+    uint8_t escaped = parse_escaped(input, error);
+    if (*error)
+      return escaped;
+
+    return escaped;
+  }
+
+  if (**input == '\0') {
+    *error = "expected literal";
+    return 0;
+  }
+
+  if (strchr(METACHARS, **input)) {
+    *error = "unexpected metacharacter";
+    return 0;
+  }
+
+  if (**input >= ' ' && **input <= '~')
+    return *(*input)++;
+
+  *error = "invalid character";
+  return 0;
+}
+
+struct nfa parse_regex(char **input, char **error);
+struct nfa parse_atom(char **input, char **error) {
+  if (**input == '(') {
+    ++*input;
+    struct nfa regex = parse_regex(input, error);
+    if (*error)
+      return regex;
+
+    if (**input != ')') {
+      *error = "expected ')'";
+      nfa_state_ll_free(regex.states, true);
+      return (struct nfa){0};
+    }
+
+    ++*input;
+    return regex;
+  }
+
+  if (**input == '[') {
+    ++*input;
+    struct nfa class = parse_class(input, error);
+    if (*error)
+      return class;
+
+    if (**input != ']') {
+      *error = "expected ']'";
+      nfa_state_ll_free(class.states, true);
+      return (struct nfa){0};
+    }
+
+    ++*input;
+    return class;
+  }
+
+  if (**input == '.') {
+    ++*input;
+    struct nfa nfa = {.initial = nfa_state_alloc(), .final = nfa_state_alloc()};
+    nfa_state_ll_prepend(&nfa.states, nfa.initial);
+    nfa_state_ll_prepend(&nfa.states, nfa.final);
+    // use `[^]` to match any character
+    for (int chr = 0; chr < 256; chr++)
+      if (chr != '\n')
+        nfa_state_ll_prepend(&nfa.initial->transitions[chr], nfa.final);
+    return nfa;
+  }
+
+  // TODO implement `^` and `$`
+
+  uint8_t literal = parse_literal(input, error);
+  if (*error)
+    return (struct nfa){0};
+
+  struct nfa nfa = {.initial = nfa_state_alloc(), .final = nfa_state_alloc()};
+  nfa_state_ll_prepend(&nfa.states, nfa.initial);
+  nfa_state_ll_prepend(&nfa.states, nfa.final);
+  nfa_state_ll_prepend(&nfa.initial->transitions[literal], nfa.final);
+  return nfa;
+}
+
+struct nfa parse_term(char **input, char **error) {
+  struct nfa atom = parse_atom(input, error);
+  if (*error)
+    return atom;
+
+  if (**input == '*') {
+    ++*input;
+    nfa_state_ll_prepend(&atom.final->epsilon, atom.initial);
+    nfa_state_ll_prepend(&atom.initial->epsilon, atom.final);
+    return atom;
+  }
+
+  if (**input == '?') {
+    ++*input;
+    nfa_state_ll_prepend(&atom.initial->epsilon, atom.final);
+    return atom;
+  }
+
+  if (**input == '+') {
+    ++*input;
+    nfa_state_ll_prepend(&atom.final->epsilon, atom.initial);
+    return atom;
+  }
+
+  return atom;
+}
+
+struct nfa parse_regex(char **input, char **error) {
+  struct nfa_state *initial = nfa_state_alloc();
+  struct nfa terms = {.initial = initial, .final = initial};
+  nfa_state_ll_prepend(&terms.states, initial);
+
+  char *last_input = *input;
+  while (1) {
+    last_input = *input;
+    struct nfa term = parse_term(input, error);
+    if (*error)
+      break;
+
+    nfa_state_ll_join(&terms.states, term.states);
+    nfa_state_ll_prepend(&terms.final->epsilon, term.initial);
+    terms.final = term.final;
+  }
+  if (strchr(")|", *last_input)) { // hacky lookahead for better diagnostics
+    // backtrack
+    *input = last_input;
+    *error = NULL;
+  }
+  if (*error) {
+    nfa_state_ll_free(terms.states, true);
+    return (struct nfa){0};
+  }
+
+  if (**input == '|') {
+    ++*input;
+    struct nfa regex = parse_regex(input, error);
+    if (*error) {
+      nfa_state_ll_free(terms.states, true);
+      return regex;
+    }
+
+    struct nfa nfa = {.initial = nfa_state_alloc(), .final = nfa_state_alloc()};
+    nfa_state_ll_prepend(&nfa.states, nfa.initial);
+    nfa_state_ll_prepend(&nfa.states, nfa.final);
+    nfa_state_ll_join(&nfa.states, terms.states);
+    nfa_state_ll_join(&nfa.states, regex.states);
+    nfa_state_ll_prepend(&nfa.initial->epsilon, terms.initial);
+    nfa_state_ll_prepend(&nfa.initial->epsilon, regex.initial);
+    nfa_state_ll_prepend(&terms.final->epsilon, nfa.final);
+    nfa_state_ll_prepend(&regex.final->epsilon, nfa.final);
+    return nfa;
+  }
+
+  return terms;
+}
+
+struct nfa nfa_from_pattern(char *pattern) {
+  char *error = NULL;
+  char *input = pattern;
+  struct nfa regex = parse_regex(&input, &error);
+  if (!error && *input != '\0')
+    error = "expected end of pattern";
+
+  if (error) {
+    fprintf(stderr, "ltre: error: %s near '%s'\n", error, input);
+    exit(EXIT_FAILURE);
+  }
+
+  assert(*input == '\0'); // sanity check
+  return regex;
+}
+
+struct dfa dfa_random(dfa_state_t size) {
+  struct dfa dfa = {.size = size};
+
+  dfa.transitions = malloc(sizeof(dfa_state_t[256]) * dfa.size);
+  for (dfa_state_t state = 0; state < dfa.size; state++)
+    for (int chr = 0; chr < 256; chr++)
+      dfa.transitions[state][chr] = rand() % dfa.size;
+
+  dfa.accepting = malloc(sizeof(bool) * dfa.size);
+  for (dfa_state_t state = 0; state < dfa.size; state++)
+    dfa.accepting[state] = rand() % 2;
+
+  return dfa;
+}
+
 struct nfa_state_ll *nfa_state_epsilon_closure(struct nfa_state *state) {
   // depth-first epsilon closure
 
@@ -244,94 +562,20 @@ struct nfa_state_ll *nfa_state_chr_closure(struct nfa_state *state,
   return chr_closure;
 }
 
-struct nfa nfa_from_pattern(char *pattern) {
-  // TODO
-
-  struct nfa nfa = {.initial = NULL, .states = NULL};
-
-  // struct nfa_state *state0 = nfa_state_alloc();
-  // nfa_state_ll_prepend(&nfa.states, state0);
-  // struct nfa_state *state1 = nfa_state_alloc();
-  // nfa_state_ll_prepend(&nfa.states, state1);
-  // struct nfa_state *state2 = nfa_state_alloc();
-  // nfa_state_ll_prepend(&nfa.states, state2);
-  // struct nfa_state *state3 = nfa_state_alloc();
-  // nfa_state_ll_prepend(&nfa.states, state3);
-  //
-  // nfa_state_ll_prepend(&state0->epsilon, state1);
-  // nfa_state_ll_prepend(&state1->transitions['a'], state1);
-  // nfa_state_ll_prepend(&state1->transitions['a'], state2);
-  // nfa_state_ll_prepend(&state1->transitions['b'], state2);
-  // nfa_state_ll_prepend(&state2->transitions['a'], state2);
-  // nfa_state_ll_prepend(&state2->transitions['a'], state0);
-  // nfa_state_ll_prepend(&state2->transitions['b'], state3);
-  // nfa_state_ll_prepend(&state3->transitions['b'], state1);
-  // state0->accepting = true;
-  // nfa.initial = state0;
-
-  // a(ba|aaa)*(ab)?a*
-  struct nfa_state *state0 = nfa_state_alloc();
-  nfa_state_ll_prepend(&nfa.states, state0);
-  struct nfa_state *state1 = nfa_state_alloc();
-  nfa_state_ll_prepend(&nfa.states, state1);
-  struct nfa_state *state2 = nfa_state_alloc();
-  nfa_state_ll_prepend(&nfa.states, state2);
-  struct nfa_state *state3 = nfa_state_alloc();
-  nfa_state_ll_prepend(&nfa.states, state3);
-
-  nfa_state_ll_prepend(&state0->transitions['a'], state1);
-  nfa_state_ll_prepend(&state1->transitions['b'], state0);
-  nfa_state_ll_prepend(&state1->transitions['a'], state2);
-  nfa_state_ll_prepend(&state1->epsilon, state3);
-  nfa_state_ll_prepend(&state2->transitions['a'], state0);
-  nfa_state_ll_prepend(&state2->transitions['b'], state3);
-  nfa_state_ll_prepend(&state3->transitions['a'], state3);
-  state3->accepting = true;
-  nfa.initial = state0;
-
-  // struct nfa_state *state0 = nfa_state_alloc();
-  // nfa_state_ll_prepend(&nfa.states, state0);
-  // struct nfa_state *state1 = nfa_state_alloc();
-  // nfa_state_ll_prepend(&nfa.states, state1);
-  //
-  // nfa_state_ll_prepend(&state0->transitions['b'], state1);
-  // nfa_state_ll_prepend(&state0->transitions['c'], state1);
-  // nfa_state_ll_prepend(&state1->transitions['d'], state0);
-  // state1->accepting = true;
-  // nfa.initial = state0;
-
-  return nfa;
-}
-
-struct dfa dfa_random(dfa_state_t size) {
-  struct dfa dfa = {.size = size};
-
-  dfa.transitions = malloc(sizeof(dfa_state_t[256]) * dfa.size);
-  for (dfa_state_t state = 0; state < dfa.size; state++)
-    for (int chr = 0; chr < 256; chr++)
-      dfa.transitions[state][chr] = rand() % dfa.size;
-
-  dfa.accepting = malloc(sizeof(bool) * dfa.size);
-  for (dfa_state_t state = 0; state < dfa.size; state++)
-    dfa.accepting[state] = rand() % 2;
-
-  return dfa;
-}
-
 struct dfa dfa_from_nfa(struct nfa nfa) {
   // powerset construction. time complexity is probably cubic or quartic in the
   // number of states, but that's fine for now
 
   struct nfa_state_ll_ll *metastates =
       nfa_state_ll_ll_alloc(nfa_state_epsilon_closure(nfa.initial));
+  nfa.initial = NULL; // no longer needed
 
   // dangerously modify the metastates linked list while iterating over it. for
   // every metastate, for every possible input character, compute the set of all
   // states we could reach by consuming that character. turn that set of states
   // into a metastate and add it to `metastates`. blindly repeat until we run
   // out of new metastates to create
-  for (bool done = false; !done;) {
-    done = true;
+  while (!metastates->state) {
     for (struct nfa_state_ll_ll *ll_ll = metastates; ll_ll;
          ll_ll = ll_ll->next) {
       // we've assigned this metastate a state already and therefore to all
@@ -339,15 +583,12 @@ struct dfa dfa_from_nfa(struct nfa nfa) {
       if (ll_ll->state)
         break;
       ll_ll->state = nfa_state_alloc();
-      done = false;
 
       for (int chr = 0; chr < 256; chr++) {
         struct nfa_state_ll *transition_union = NULL;
-        bool accepting_union = false;
 
-        // union of transitions and accepting states
+        // union of transitions
         for (struct nfa_state_ll *ll = ll_ll->ll; ll; ll = ll->next) {
-          accepting_union |= ll->state->accepting;
           struct nfa_state_ll *chr_closure =
               nfa_state_chr_closure(ll->state, chr);
           for (struct nfa_state_ll *ll = chr_closure; ll; ll = ll->next)
@@ -370,7 +611,6 @@ struct dfa dfa_from_nfa(struct nfa nfa) {
         // build transition to the metastate
         assert(ll_ll->state->transitions[chr] == NULL); // sanity check
         ll_ll->state->transitions[chr] = existing_metastate;
-        ll_ll->state->accepting = accepting_union;
       }
     }
   }
@@ -382,13 +622,11 @@ struct dfa dfa_from_nfa(struct nfa nfa) {
   for (struct nfa_state_ll_ll *ll_ll = metastates; ll_ll; ll_ll = ll_ll->next) {
     assert(ll_ll->state->epsilon == NULL);
 
-    // funny indexes to ensure `nfa.initial` matches with
+    // funny index to ensure the initial state in `metastates` ends up at
     // `dfa.transitions[INITIAL]`
     int i = ll_ll->len - 1;
-    if (i == INITIAL)
-      assert(ll_ll->len == 1);
 
-    dfa.accepting[i] = ll_ll->state->accepting;
+    dfa.accepting[i] = nfa_state_ll_get(ll_ll->ll, nfa.final) != NULL;
 
     for (int chr = 0; chr < 256; chr++) {
       struct nfa_state_ll *ll = ll_ll->state->transitions[chr];
@@ -411,7 +649,7 @@ struct dfa dfa_from_nfa(struct nfa nfa) {
     free(ll_ll->state);
 
   nfa_state_ll_ll_free(metastates, true, false);
-  nfa_free(nfa);
+  nfa_state_ll_free(nfa.states, true);
 
   return dfa;
 }

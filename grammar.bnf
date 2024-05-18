@@ -1,9 +1,8 @@
-<regex> ::= <term> ("|" <term>)*
-<term> ::= <atom> <quantifier>?
+<regex> ::= <term>* ("|" <regex>)?
+<term> ::= <atom> ("*" | "+" | "?")?
 <atom> ::= <literal> | "(" <regex> ")" | "[" <class> "]" | "." | "^" | "$"
 <literal> ::= "\\" <escaped> | ? ' ' to '~' except <metachar> ?
 <escaped> ::= "a" | "b" | "f" | "n" | "r" | "t" | "v" | "x" <hexbyte> | <metachar>
 <hexbyte> ::= (? '0' to '9' or 'a' to 'f' or 'A' to 'F' ?){2}
-<metachar> ::= "\\" | "." | "^" | "$" | "*" | "+" | "?" | "{" | "}" | "[" | "]" | "(" | ")" | "|"
-<quantifier> ::= "*" | "+" | "?"
-<class> ::= "^"? (<literal> "-" <literal> | <literal>)*
+<metachar> ::= "\\" | "." | "^" | "$" | "*" | "+" | "?" | "[" | "]" | "(" | ")" | "|"
+<class> ::= "^"? (<literal> ("-" <literal>)?)*
