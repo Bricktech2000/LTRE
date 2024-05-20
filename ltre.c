@@ -498,7 +498,7 @@ struct dstate *ltre_compile_full(struct nstate *nfa) {
 }
 
 struct dstate *ltre_compile_part(struct nstate *nfa) {
-  // partial match. effectively surround the NFA between two `[^]*`
+  // partial match. effectively, surround the NFA between two `[^]*`s
   for (int chr = 0; chr < 256; chr++) {
     nstate_lpush(&nfa->transitions[chr], nfa);
     nstate_lpush(&nfa->next->transitions[chr], nfa->next);
