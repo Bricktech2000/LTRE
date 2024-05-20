@@ -14,7 +14,7 @@ void test(char *regex, char *input, bool errors, bool matches) {
   if (ltre_matches(dfa, (uint8_t *)input) != matches)
     fprintf(stderr, "test failed: /%s/ against '%s'\n", regex, input);
 
-  free(nfa), free(dfa);
+  nfa_free(nfa), dfa_free(dfa);
 }
 
 void match(char *input, char *regex) { test(input, regex, false, true); }
@@ -51,6 +51,23 @@ int main(void) {
   nomatch("[-a]+", "-ac");
   match("[\\^]", "^");
   nomatch("[^\\^]", "^");
+  match("(a+)+", "aa");
+  match("(a*)*", "a");
+  match("(a?)?", "");
+  match("a+", "aa");
+  nomatch("a?", "aa");
+  match("(a+)?", "aa");
+  match("(ba+)?", "baa");
+  nomatch("(a+a+)+", "a");
+  nomatch("a+", "");
+  match("(a+|)+", "aa");
+  match("(a+|)+", "");
+  match("x+|", "xx");
+  match("x+|", "");
+  match("x*|", "xx");
+  match("x*|", "");
+  match("x?|", "x");
+  match("x?|", "");
 
   char *re = "\"([^\\\\\"]|\\\\[^])*\"";
   nomatch(re, "foo");

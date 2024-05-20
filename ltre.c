@@ -1,4 +1,5 @@
 #include "ltre.h"
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -45,6 +46,8 @@ void nfa_free(struct nstate *nstate) {
 
 void nstate_lpush(struct nstate **nstatep, struct nstate *nstate) {
   // pushes to the beginning, with respect to `lnext`
+  assert(nstate->lnext == NULL); // assert not already part of a list
+  assert(nstate != *nstatep);    // assert not a self loop
   nstate->lnext = *nstatep;
   *nstatep = nstate;
 }
@@ -224,6 +227,9 @@ uint8_t parse_hexbyte(char **regex, char **error) {
 }
 
 uint8_t parse_escaped(char **regex, char **error) {
+  if (strchr(METACHARS, **regex))
+    return *(*regex)++;
+
   switch (*(*regex)++) {
   case 'a':
     return '\a';
@@ -242,12 +248,10 @@ uint8_t parse_escaped(char **regex, char **error) {
   case 'x':;
     uint8_t chr = parse_hexbyte(regex, error);
     if (*error)
-      return chr;
+      return 0;
     return chr;
-  default:
-    if (strchr(METACHARS, *(*regex - 1)))
-      return *(*regex - 1);
   }
+
   --*regex;
   *error = "unknown escape sequence";
   return 0;
@@ -381,10 +385,10 @@ struct nstate *parse_regex(char **regex, char **error) {
     nstate_join(&terms, term);
     // move `term->next` (the final state of `term`) to between `*terms` and
     // `*terms->next` (so it becomes the final state of `terms`)
-    struct nstate *term_next = term->next;
-    term->next = term_next->next;
-    term_next->next = terms->next;
-    terms->next = term_next;
+    struct nstate *term_final = term->next;
+    term->next = term_final->next;
+    term_final->next = terms->next;
+    terms->next = term_final;
   }
   if (strchr(")|", *last_regex)) { // hacky lookahead for better diagnostics
     // backtrack
@@ -395,6 +399,24 @@ struct nstate *parse_regex(char **regex, char **error) {
     nfa_free(terms);
     return NULL;
   }
+
+  // add dummy final states so any `<regex>` ends up surrounded by a pair of
+  // epsilon transitions to and from states **which have no `lnext`**. the
+  // quantifier parsers assume this invariant. these gymnastics are necessary
+  // because `nstate->epsilon` is a linked list of `nstate`s, not of `nstate*`s
+  struct nstate *split_dummy = nstate_alloc();
+  struct nstate *join_dummy = nstate_alloc();
+  struct nstate *terms_final = terms->next;
+  // move the dummies to between `*terms` and `*terms->next` (so `join_dummy`
+  // becomes the final state of `terms`)
+  join_dummy->next = split_dummy;
+  split_dummy->next = terms_final;
+  terms->next = join_dummy;
+  // join by epsilon transitions `terms --> split_dummy --> join_dummy`
+  nstate_lpush(&terms_final->epsilon, split_dummy);
+  nstate_lpush(&split_dummy->epsilon, join_dummy);
+  assert(!terms->lnext);      // initial state shall have no `lnext`
+  assert(!join_dummy->lnext); // final state shall have no `lnext`
 
   if (**regex == '|') {
     ++*regex;
@@ -432,6 +454,7 @@ struct nstate *ltre_parse(char *regex) {
     // fprintf(stderr, "ltre: error: %s near '%s'\n", error, regex);
     return NULL;
 
+  assert(*regex == '\0'); // sanity check
   return nfa;
 }
 
