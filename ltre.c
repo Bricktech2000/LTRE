@@ -1,5 +1,4 @@
 #include "ltre.h"
-#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -148,35 +147,35 @@ void dfa_dump(struct dstate *dfa) {
 }
 
 // some invariants for parsers on `error`:
-// - the NFA returned shall be null
-// - `input` shall point to the error location
-// - the caller shall backtrack if necessary
+// - the NFA returned shall be `NULL`
+// - `regex` shall point to the error location
+// - the caller may backtrack if necessary
 
-uint8_t parse_literal(char **input, char **error);
-struct nstate *parse_class(char **input, char **error) {
+uint8_t parse_literal(char **regex, char **error);
+struct nstate *parse_class(char **regex, char **error) {
   struct nstate *lits = nstate_alloc();
   lits->next = nstate_alloc();
 
   bool invert = false;
-  if (**input == '^') {
-    ++*input;
+  if (**regex == '^') {
+    ++*regex;
     invert = true;
   }
 
-  uint8_t bitset[256 / 8];
-  char *last_input = *input;
+  uint8_t bitset[256 / 8] = {0};
+  char *last_regex = *regex;
   while (1) {
-    last_input = *input;
-    uint8_t begin = parse_literal(input, error);
+    last_regex = *regex;
+    uint8_t begin = parse_literal(regex, error);
     if (*error)
       break;
 
     uint8_t end = begin;
-    if (**input == '-') {
-      ++*input;
-      end = parse_literal(input, error);
+    if (**regex == '-') {
+      ++*regex;
+      end = parse_literal(regex, error);
       if (!*error && begin > end) {
-        *input = last_input;
+        *regex = last_regex;
         *error = "invalid character range";
       }
       if (*error) {
@@ -188,9 +187,9 @@ struct nstate *parse_class(char **input, char **error) {
     for (int chr = begin; chr <= end; chr++)
       bitset_set(bitset, chr);
   }
-  if (strchr("]", *last_input)) { // hacky lookahead for better diagnostics
+  if (strchr("]", *last_regex)) { // hacky lookahead for better diagnostics
     // backtrack
-    *input = last_input;
+    *regex = last_regex;
     *error = NULL;
   }
   if (*error) {
@@ -205,10 +204,10 @@ struct nstate *parse_class(char **input, char **error) {
   return lits;
 }
 
-uint8_t parse_hexbyte(char **input, char **error) {
+uint8_t parse_hexbyte(char **regex, char **error) {
   uint8_t byte = 0;
   for (int i = 0; i < 2; i++, byte <<= 4) {
-    uint8_t chr = **input;
+    uint8_t chr = **regex;
     if (chr >= '0' && chr <= '9')
       byte |= chr - '0';
     else if (chr >= 'a' && chr <= 'f')
@@ -219,13 +218,13 @@ uint8_t parse_hexbyte(char **input, char **error) {
       *error = "expected hex digit";
       return 0;
     }
-    ++*input;
+    ++*regex;
   }
   return byte;
 }
 
-uint8_t parse_escaped(char **input, char **error) {
-  switch (*(*input)++) {
+uint8_t parse_escaped(char **regex, char **error) {
+  switch (*(*regex)++) {
   case 'a':
     return '\a';
   case 'b':
@@ -241,82 +240,82 @@ uint8_t parse_escaped(char **input, char **error) {
   case 'v':
     return '\v';
   case 'x':;
-    uint8_t chr = parse_hexbyte(input, error);
+    uint8_t chr = parse_hexbyte(regex, error);
     if (*error)
       return chr;
     return chr;
   default:
-    if (strchr(METACHARS, *(*input - 1)))
-      return *(*input - 1);
+    if (strchr(METACHARS, *(*regex - 1)))
+      return *(*regex - 1);
   }
-  --*input;
+  --*regex;
   *error = "unknown escape sequence";
   return 0;
 }
 
-uint8_t parse_literal(char **input, char **error) {
-  if (**input == '\\') {
-    ++*input;
-    uint8_t escaped = parse_escaped(input, error);
+uint8_t parse_literal(char **regex, char **error) {
+  if (**regex == '\\') {
+    ++*regex;
+    uint8_t escaped = parse_escaped(regex, error);
     if (*error)
       return 0;
 
     return escaped;
   }
 
-  if (**input == '\0') {
+  if (**regex == '\0') {
     *error = "expected literal";
     return 0;
   }
 
-  if (strchr(METACHARS, **input)) {
+  if (strchr(METACHARS, **regex)) {
     *error = "unexpected metacharacter";
     return 0;
   }
 
-  if (**input >= ' ' && **input <= '~')
-    return *(*input)++;
+  if (**regex >= ' ' && **regex <= '~')
+    return *(*regex)++;
 
   *error = "invalid character";
   return 0;
 }
 
-struct nstate *parse_regex(char **input, char **error);
-struct nstate *parse_atom(char **input, char **error) {
-  if (**input == '(') {
-    ++*input;
-    struct nstate *regex = parse_regex(input, error);
+struct nstate *parse_regex(char **regex, char **error);
+struct nstate *parse_atom(char **regex, char **error) {
+  if (**regex == '(') {
+    ++*regex;
+    struct nstate *sub = parse_regex(regex, error);
     if (*error)
       return NULL;
 
-    if (**input != ')') {
+    if (**regex != ')') {
       *error = "expected ')'";
-      nfa_free(regex);
+      nfa_free(sub);
       return NULL;
     }
 
-    ++*input;
-    return regex;
+    ++*regex;
+    return sub;
   }
 
-  if (**input == '[') {
-    ++*input;
-    struct nstate *class = parse_class(input, error);
+  if (**regex == '[') {
+    ++*regex;
+    struct nstate *class = parse_class(regex, error);
     if (*error)
       return NULL;
 
-    if (**input != ']') {
+    if (**regex != ']') {
       *error = "expected ']'";
       nfa_free(class);
       return NULL;
     }
 
-    ++*input;
+    ++*regex;
     return class;
   }
 
-  if (**input == '.') {
-    ++*input;
+  if (**regex == '.') {
+    ++*regex;
     struct nstate *nfa = nstate_alloc();
     nfa->next = nstate_alloc();
     // use `[^]` to match any character
@@ -328,7 +327,7 @@ struct nstate *parse_atom(char **input, char **error) {
 
   // TODO implement `^` and `$`
 
-  uint8_t literal = parse_literal(input, error);
+  uint8_t literal = parse_literal(regex, error);
   if (*error)
     return NULL;
 
@@ -339,26 +338,26 @@ struct nstate *parse_atom(char **input, char **error) {
   return nfa;
 }
 
-struct nstate *parse_term(char **input, char **error) {
-  struct nstate *atom = parse_atom(input, error);
+struct nstate *parse_term(char **regex, char **error) {
+  struct nstate *atom = parse_atom(regex, error);
   if (*error)
     return NULL;
 
-  if (**input == '*') {
-    ++*input;
+  if (**regex == '*') {
+    ++*regex;
     nstate_lpush(&atom->next->epsilon, atom);
     nstate_lpush(&atom->epsilon, atom->next);
     return atom;
   }
 
-  if (**input == '?') {
-    ++*input;
+  if (**regex == '?') {
+    ++*regex;
     nstate_lpush(&atom->epsilon, atom->next);
     return atom;
   }
 
-  if (**input == '+') {
-    ++*input;
+  if (**regex == '+') {
+    ++*regex;
     nstate_lpush(&atom->next->epsilon, atom);
     return atom;
   }
@@ -366,15 +365,15 @@ struct nstate *parse_term(char **input, char **error) {
   return atom;
 }
 
-struct nstate *parse_regex(char **input, char **error) {
+struct nstate *parse_regex(char **regex, char **error) {
   struct nstate *terms = nstate_alloc();
   terms->next = nstate_alloc();
   nstate_lpush(&terms->epsilon, terms->next);
 
-  char *last_input = *input;
+  char *last_regex = *regex;
   while (1) {
-    last_input = *input;
-    struct nstate *term = parse_term(input, error);
+    last_regex = *regex;
+    struct nstate *term = parse_term(regex, error);
     if (*error)
       break;
 
@@ -387,9 +386,9 @@ struct nstate *parse_regex(char **input, char **error) {
     term_next->next = terms->next;
     terms->next = term_next;
   }
-  if (strchr(")|", *last_input)) { // hacky lookahead for better diagnostics
+  if (strchr(")|", *last_regex)) { // hacky lookahead for better diagnostics
     // backtrack
-    *input = last_input;
+    *regex = last_regex;
     *error = NULL;
   }
   if (*error) {
@@ -397,9 +396,9 @@ struct nstate *parse_regex(char **input, char **error) {
     return NULL;
   }
 
-  if (**input == '|') {
-    ++*input;
-    struct nstate *regex = parse_regex(input, error);
+  if (**regex == '|') {
+    ++*regex;
+    struct nstate *alt = parse_regex(regex, error);
     if (*error) {
       nfa_free(terms);
       return NULL;
@@ -408,33 +407,32 @@ struct nstate *parse_regex(char **input, char **error) {
     struct nstate *nfa = nstate_alloc();
     nfa->next = nstate_alloc();
     nstate_join(&nfa, terms);
-    nstate_join(&nfa, regex);
+    nstate_join(&nfa, alt);
     nstate_lpush(&nfa->epsilon, terms);
-    nstate_lpush(&nfa->epsilon, regex);
+    nstate_lpush(&nfa->epsilon, alt);
     nstate_lpush(&terms->next->epsilon, nfa->next);
-    nstate_lpush(&regex->next->epsilon, nfa->next);
+    nstate_lpush(&alt->next->epsilon, nfa->next);
     return nfa;
   }
 
   return terms;
 }
 
-struct nstate *nfa_from_pattern(char *pattern) {
+struct nstate *ltre_parse(char *regex) {
+  // returns `NULL` on error
+
   char *error = NULL;
-  char *input = pattern;
-  struct nstate *regex = parse_regex(&input, &error);
-  if (!error && *input != '\0') {
-    error = "expected end of pattern";
-    nfa_free(regex);
+  struct nstate *nfa = parse_regex(&regex, &error);
+  if (!error && *regex != '\0') {
+    error = "expected end of input";
+    nfa_free(nfa);
   }
 
-  if (error) {
-    fprintf(stderr, "ltre: error: %s near '%s'\n", error, input);
-    exit(EXIT_FAILURE);
-  }
+  if (error)
+    // fprintf(stderr, "ltre: error: %s near '%s'\n", error, regex);
+    return NULL;
 
-  assert(*input == '\0'); // sanity check
-  return regex;
+  return nfa;
 }
 
 void epsilon_closure(struct nstate *nstate, uint8_t bitset[]) {
@@ -449,7 +447,9 @@ void epsilon_closure(struct nstate *nstate, uint8_t bitset[]) {
   }
 }
 
-struct dstate *dfa_from_nfa(struct nstate *nfa) {
+struct dstate *ltre_compile_full(struct nstate *nfa) {
+  // full match. powerset construction
+
   int nfa_size = 0;
   for (struct nstate *nstate = nfa; nstate; nstate = nstate->next)
     nstate->id = nfa_size++;
@@ -482,29 +482,34 @@ struct dstate *dfa_from_nfa(struct nstate *nfa) {
       if (!*dstatep) {
         *dstatep = dstate_alloc(bitset_size);
         memcpy((*dstatep)->bitset, bitset_union, bitset_size);
-        (*dstatep)->accepting = bitset_get(bitset_union, nfa->next->id);
         tail->qnext = *dstatep;
         tail = *dstatep;
       }
 
       elem->transitions[chr] = *dstatep;
     }
+
+    elem->accepting = bitset_get(elem->bitset, nfa->next->id);
   }
+
+  // dfa_dump(head);
 
   return head;
 }
 
-struct dstate *ltre_compile(char *pattern) {
-  struct nstate *nfa = nfa_from_pattern(pattern);
-  struct dstate *dfa = dfa_from_nfa(nfa);
-  nfa_free(nfa);
-  return dfa;
+struct dstate *ltre_compile_part(struct nstate *nfa) {
+  // partial match. effectively surround the NFA between two `[^]*`
+  for (int chr = 0; chr < 256; chr++) {
+    nstate_lpush(&nfa->transitions[chr], nfa);
+    nstate_lpush(&nfa->next->transitions[chr], nfa->next);
+  }
+
+  return ltre_compile_full(nfa);
 }
 
 bool ltre_matches(struct dstate *dfa, uint8_t *input) {
   // time linear in the input length :)
-  struct dstate *dstate = dfa;
   for (; *input; input++)
-    dstate = dstate->transitions[*input];
-  return dstate->accepting;
+    dfa = dfa->transitions[*input];
+  return dfa->accepting;
 }
