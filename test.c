@@ -68,6 +68,11 @@ int main(void) {
   match("x*|", "");
   match("x?|", "x");
   match("x?|", "");
+  nomatch("x*y*", "yx");
+  nomatch("x+y+", "yx");
+  nomatch("x?y?", "yx");
+  nomatch("x+y*", "xyx");
+  nomatch("x*y+", "yxy");
 
   char *re = "\"([^\\\\\"]|\\\\[^])*\"";
   nomatch(re, "foo");

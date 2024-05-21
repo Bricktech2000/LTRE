@@ -351,22 +351,25 @@ struct nstate *parse_term(char **regex, char **error) {
     ++*regex;
     nstate_lpush(&atom->next->epsilon, atom);
     nstate_lpush(&atom->epsilon, atom->next);
-    return atom;
   }
 
   if (**regex == '?') {
     ++*regex;
     nstate_lpush(&atom->epsilon, atom->next);
-    return atom;
   }
 
   if (**regex == '+') {
     ++*regex;
     nstate_lpush(&atom->next->epsilon, atom);
-    return atom;
   }
 
-  return atom;
+  struct nstate *nfa = nstate_alloc();
+  nfa->next = nstate_alloc();
+  nstate_lpush(&nfa->epsilon, atom);
+  nstate_lpush(&atom->next->epsilon, nfa->next);
+  nstate_join(&nfa, atom);
+
+  return nfa;
 }
 
 struct nstate *parse_regex(char **regex, char **error) {
@@ -378,17 +381,31 @@ struct nstate *parse_regex(char **regex, char **error) {
   while (1) {
     last_regex = *regex;
     struct nstate *term = parse_term(regex, error);
+
+    // introduce a dummy node to handle concatenation. this ensures any `<term>`
+    // within a `<regex>` is up surrounded by a pair of epsilon transitions to
+    // and from states **which have no `lnext`**. the quantifier parsers assume
+    // this invariant. these gymnastics are necessary because `nstate->epsilon`
+    // is a linked list of `nstate`s, not of `nstate` pointers
+    struct nstate *epsilon = nstate_alloc();
+    struct nstate *terms_final = terms->next;
+    epsilon->next = terms_final;
+    terms->next = epsilon;
+    nstate_lpush(&terms_final->epsilon, epsilon);
+    assert(!terms->lnext);       // initial state shall have no `lnext`
+    assert(!terms->next->lnext); // final state shall have no `lnext`
+
     if (*error)
       break;
 
-    nstate_lpush(&terms->next->epsilon, term);
-    nstate_join(&terms, term);
-    // move `term->next` (the final state of `term`) to between `*terms` and
-    // `*terms->next` (so it becomes the final state of `terms`)
+    // concatenation. move `term->next` (the final state of `term`) to between
+    // `*terms` and `*terms->next` (so it becomes the final state of `terms`)
     struct nstate *term_final = term->next;
     term->next = term_final->next;
     term_final->next = terms->next;
     terms->next = term_final;
+    nstate_join(&terms, term);
+    nstate_lpush(&term_final->next->epsilon, term);
   }
   if (strchr(")|", *last_regex)) { // hacky lookahead for better diagnostics
     // backtrack
@@ -399,24 +416,6 @@ struct nstate *parse_regex(char **regex, char **error) {
     nfa_free(terms);
     return NULL;
   }
-
-  // add dummy final states so any `<regex>` ends up surrounded by a pair of
-  // epsilon transitions to and from states **which have no `lnext`**. the
-  // quantifier parsers assume this invariant. these gymnastics are necessary
-  // because `nstate->epsilon` is a linked list of `nstate`s, not of `nstate*`s
-  struct nstate *split_dummy = nstate_alloc();
-  struct nstate *join_dummy = nstate_alloc();
-  struct nstate *terms_final = terms->next;
-  // move the dummies to between `*terms` and `*terms->next` (so `join_dummy`
-  // becomes the final state of `terms`)
-  join_dummy->next = split_dummy;
-  split_dummy->next = terms_final;
-  terms->next = join_dummy;
-  // join by epsilon transitions `terms --> split_dummy --> join_dummy`
-  nstate_lpush(&terms_final->epsilon, split_dummy);
-  nstate_lpush(&split_dummy->epsilon, join_dummy);
-  assert(!terms->lnext);      // initial state shall have no `lnext`
-  assert(!join_dummy->lnext); // final state shall have no `lnext`
 
   if (**regex == '|') {
     ++*regex;
