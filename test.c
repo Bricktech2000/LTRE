@@ -22,35 +22,26 @@ void nomatch(char *input, char *regex) { test(input, regex, false, false); }
 void syntax(char *input, char *regex) { test(input, regex, true, false); }
 
 int main(void) {
+  // catastrophic backtracking
   nomatch("(a*)*c", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
   nomatch("(x+x+)+y", "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
 
+  // potential edge cases
   match("abba", "abba");
-  nomatch("\\x61*|b+a\\)", "abba");
-  nomatch("a(ba|aaa)*(ab)?a*", "abba");
-  nomatch("[bar]", "abba");
   match("[ab]+", "abba");
-  nomatch("", "abba");
+  nomatch("[ab]+", "abc");
   match(".*", "abba");
-  nomatch("[^abc]bba", "abba");
-  match("((((a(((()b))b)))a))", "abba");
-
+  match("\\x61\\+", "a+");
   match("", "");
   nomatch("[]", "");
   nomatch("", "\n");
   match("\\n", "\n");
   nomatch(".", "\n");
-  match("[^]", "\n");
-  nomatch("[-n]", "\n");
+  match("^[]", "\n");
+  nomatch("[\\-n]", "\n");
   match("(||n)(\\n)", "\n");
   match("\\r?\\n", "\n");
   match("\\r?\\n", "\r\n");
-  match("[-]", "-");
-  nomatch("[-]", "-c");
-  match("[-a]+", "-a");
-  nomatch("[-a]+", "-ac");
-  match("[\\^]", "^");
-  nomatch("[^\\^]", "^");
   match("(a+)+", "aa");
   match("(a*)*", "a");
   match("(a?)?", "");
@@ -74,7 +65,8 @@ int main(void) {
   nomatch("x+y*", "xyx");
   nomatch("x*y+", "yxy");
 
-  char *re = "\"([^\\\\\"]|\\\\[^])*\"";
+  // realistic regexes
+  char *re = "\"(^[\\\\\"]|\\\\^[])*\"";
   nomatch(re, "foo");
   nomatch(re, "\"foo");
   nomatch(re, "foo \"bar\"");
@@ -87,6 +79,7 @@ int main(void) {
   match(re, "\"foo\\\\\"");
   match(re, "\"foo\\nbar\"");
 
+  // syntax errors
   syntax("abc)", "");
   syntax("(abc", "");
   syntax("abc]", "");
@@ -95,6 +88,7 @@ int main(void) {
   syntax("[b-a]", "");
   syntax("[a-]", "");
   syntax("[--]", "");
+  syntax("[-]", "");
   syntax("+a", "");
   syntax("a+*", "");
   syntax("a|*", "");
@@ -102,4 +96,40 @@ int main(void) {
   syntax("\\zzz", "");
   syntax("[a\\x]", "");
   syntax("\a", "");
+  syntax("-", "");
+  syntax("a-", "");
+  syntax("^^a", "");
+
+  // nonstandard syntax
+  match("^a", "z");
+  nomatch("^a", "a");
+  match("^\\n", "\r");
+  nomatch("^\\n", "\n");
+  match("^.", "\n");
+  nomatch("^.", "a");
+  match("\\d+", "0123456789");
+  match("\\s+", " \f\n\r\t\v");
+  match("\\w+", "azAZ09_");
+  match("^a-z*", "1A!2$B");
+  nomatch("^a-z*", "1aA");
+  match("a-z*", "abc");
+  match("^[\\d^\\w]+", "abcABC");
+  nomatch("^[\\d^\\w]+", "abc123");
+  match("^[\\d\\W]+", "abcABC");
+  nomatch("^[\\d^\\W]+", "abc123");
+  match("[[abc]]+", "abc");
+  match("[a[bc]]+", "abc");
+  match("[a[b]c]+", "abc");
+  match("[a][b][c]", "abc");
+  nomatch("^[^a^b]", "a");
+  nomatch("^[^a^b]", "b");
+  nomatch("^[^a^b]", "");
+  match("\\^", "^");
+  nomatch("^\\^", "^");
+  match("^[^\\^]", "^");
+  match("^[ ^[a b c]]+", "abc");
+  nomatch("^[ ^[a b c]]+", "a c");
+  match("^[^0-74]+", "0123567");
+  nomatch("^[^0-74]+", "89");
+  nomatch("^[^0-74]+", "4");
 }

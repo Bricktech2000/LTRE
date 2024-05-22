@@ -1,10 +1,12 @@
 #include "ltre.h"
 #include <assert.h>
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#define METACHARS "\\.^$*+?[]()|" // for parser
+#define METACHARS "\\.-^$*+?[]()|"  // for parser
+typedef uint8_t charset_t[256 / 8]; // for parser
 
 // as a DFA, `*dstate` is the initial state
 struct dstate {
@@ -154,62 +156,10 @@ void dfa_dump(struct dstate *dfa) {
 // - `regex` shall point to the error location
 // - the caller may backtrack if necessary
 
-uint8_t parse_literal(char **regex, char **error);
-struct nstate *parse_class(char **regex, char **error) {
-  struct nstate *lits = nstate_alloc();
-  lits->next = nstate_alloc();
-
-  bool invert = false;
-  if (**regex == '^') {
-    ++*regex;
-    invert = true;
-  }
-
-  uint8_t bitset[256 / 8] = {0};
-  char *last_regex = *regex;
-  while (1) {
-    last_regex = *regex;
-    uint8_t begin = parse_literal(regex, error);
-    if (*error)
-      break;
-
-    uint8_t end = begin;
-    if (**regex == '-') {
-      ++*regex;
-      end = parse_literal(regex, error);
-      if (!*error && begin > end) {
-        *regex = last_regex;
-        *error = "invalid character range";
-      }
-      if (*error) {
-        nfa_free(lits);
-        return NULL;
-      }
-    }
-
-    for (int chr = begin; chr <= end; chr++)
-      bitset_set(bitset, chr);
-  }
-  if (strchr("]", *last_regex)) { // hacky lookahead for better diagnostics
-    // backtrack
-    *regex = last_regex;
-    *error = NULL;
-  }
-  if (*error) {
-    nfa_free(lits);
-    return NULL;
-  }
-
-  for (int chr = 0; chr < 256; chr++)
-    if (bitset_get(bitset, chr) ^ invert)
-      nstate_lpush(&lits->transitions[chr], lits->next);
-
-  return lits;
-}
-
 uint8_t parse_hexbyte(char **regex, char **error) {
   uint8_t byte = 0;
-  for (int i = 0; i < 2; i++, byte <<= 4) {
+  for (int i = 0; i < 2; i++) {
+    byte <<= 4;
     uint8_t chr = **regex;
     if (chr >= '0' && chr <= '9')
       byte |= chr - '0';
@@ -226,7 +176,7 @@ uint8_t parse_hexbyte(char **regex, char **error) {
   return byte;
 }
 
-uint8_t parse_escaped(char **regex, char **error) {
+uint8_t parse_escape(char **regex, char **error) {
   if (strchr(METACHARS, **regex))
     return *(*regex)++;
 
@@ -260,7 +210,7 @@ uint8_t parse_escaped(char **regex, char **error) {
 uint8_t parse_literal(char **regex, char **error) {
   if (**regex == '\\') {
     ++*regex;
-    uint8_t escaped = parse_escaped(regex, error);
+    uint8_t escaped = parse_escape(regex, error);
     if (*error)
       return 0;
 
@@ -284,6 +234,127 @@ uint8_t parse_literal(char **regex, char **error) {
   return 0;
 }
 
+void parse_shorthand(charset_t charset, char **regex, char **error) {
+  // `charset` shall be zeroed
+
+  if (**regex == '\\') {
+    ++*regex;
+    switch (*(*regex)++) {
+    case 'd':
+      for (int chr = 0; chr < 256; chr++)
+        if (isdigit(chr))
+          bitset_set(charset, chr);
+      return;
+    case 'D':
+      for (int chr = 0; chr < 256; chr++)
+        if (!isdigit(chr))
+          bitset_set(charset, chr);
+      return;
+    case 's':
+      for (int chr = 0; chr < 256; chr++)
+        if (isspace(chr))
+          bitset_set(charset, chr);
+      return;
+    case 'S':
+      for (int chr = 0; chr < 256; chr++)
+        if (!isspace(chr))
+          bitset_set(charset, chr);
+      return;
+    case 'w':
+      for (int chr = 0; chr < 256; chr++)
+        if (chr == '_' || isalnum(chr))
+          bitset_set(charset, chr);
+      return;
+    case 'W':
+      for (int chr = 0; chr < 256; chr++)
+        if (chr != '_' && !isalnum(chr))
+          bitset_set(charset, chr);
+      return;
+    }
+    --*regex, --*regex;
+  }
+
+  if (**regex == '.') {
+    ++*regex;
+    for (int chr = 0; chr < 256; chr++)
+      if (chr != '\n')
+        bitset_set(charset, chr);
+    return;
+  }
+
+  *error = "expected shorthand class";
+  return;
+}
+
+void parse_charset(charset_t charset, char **regex, char **error) {
+  // `charset` shall be zeroed
+
+  bool invert = false;
+  if (**regex == '^')
+    ++*regex, invert = true;
+
+  char *last_regex = *regex;
+  parse_shorthand(charset, regex, error);
+  if (!*error)
+    goto process_invert;
+  *error = NULL;
+  *regex = last_regex;
+
+  if (**regex == '[') {
+    ++*regex;
+
+    // backwards compatibility
+    // if (**regex == '^')
+    //   ++*regex, invert ^= true;
+
+    // hacky lookahead for better diagnostics
+    while (!strchr("]", **regex)) {
+      charset_t class = {0};
+      parse_charset(class, regex, error);
+      if (*error)
+        return;
+
+      for (int i = 0; i < sizeof(charset_t); i++)
+        charset[i] |= class[i];
+    }
+
+    if (**regex != ']') {
+      *error = "expected ']'";
+      return;
+    }
+
+    ++*regex;
+    goto process_invert;
+  }
+  *regex = last_regex;
+
+  uint8_t begin = parse_literal(regex, error);
+  if (!*error) {
+    uint8_t end = begin;
+    if (**regex == '-') {
+      ++*regex;
+      end = parse_literal(regex, error);
+      if (!*error && begin > end) {
+        *regex = last_regex;
+        *error = "invalid character range";
+      }
+      if (*error)
+        return;
+    }
+
+    for (int chr = begin; chr <= end; chr++)
+      bitset_set(charset, chr);
+    goto process_invert;
+  }
+  return;
+
+process_invert:
+  if (invert)
+    for (int i = 0; i < sizeof(charset_t); i++)
+      charset[i] = ~charset[i];
+  return;
+}
+
 struct nstate *parse_regex(char **regex, char **error);
 struct nstate *parse_atom(char **regex, char **error) {
   if (**regex == '(') {
@@ -302,44 +373,18 @@ struct nstate *parse_atom(char **regex, char **error) {
     return sub;
   }
 
-  if (**regex == '[') {
-    ++*regex;
-    struct nstate *class = parse_class(regex, error);
-    if (*error)
-      return NULL;
-
-    if (**regex != ']') {
-      *error = "expected ']'";
-      nfa_free(class);
-      return NULL;
-    }
-
-    ++*regex;
-    return class;
-  }
-
-  if (**regex == '.') {
-    ++*regex;
-    struct nstate *nfa = nstate_alloc();
-    nfa->next = nstate_alloc();
-    // use `[^]` to match any character
-    for (int chr = 0; chr < 256; chr++)
-      if (chr != '\n')
-        nstate_lpush(&nfa->transitions[chr], nfa->next);
-    return nfa;
-  }
-
-  // TODO implement `^` and `$`
-
-  uint8_t literal = parse_literal(regex, error);
+  charset_t bitset = {0};
+  parse_charset(bitset, regex, error);
   if (*error)
     return NULL;
 
-  struct nstate *nfa = nstate_alloc();
-  nfa->next = nstate_alloc();
-  nstate_lpush(&nfa->transitions[literal], nfa->next);
+  struct nstate *chars = nstate_alloc();
+  chars->next = nstate_alloc();
+  for (int chr = 0; chr < 256; chr++)
+    if (bitset_get(bitset, chr))
+      nstate_lpush(&chars->transitions[chr], chars->next);
 
-  return nfa;
+  return chars;
 }
 
 struct nstate *parse_term(char **regex, char **error) {
@@ -377,10 +422,22 @@ struct nstate *parse_regex(char **regex, char **error) {
   terms->next = nstate_alloc();
   nstate_lpush(&terms->epsilon, terms->next);
 
-  char *last_regex = *regex;
-  while (1) {
-    last_regex = *regex;
+  // hacky lookahead for better diagnostics
+  while (!strchr(")|", **regex)) {
     struct nstate *term = parse_term(regex, error);
+    if (*error) {
+      nfa_free(terms);
+      return NULL;
+    }
+
+    // concatenation. move `term->next` (the final state of `term`) to between
+    // `*terms` and `*terms->next` (so it becomes the final state of `terms`)
+    struct nstate *term_final = term->next;
+    term->next = term_final->next;
+    term_final->next = terms->next;
+    terms->next = term_final;
+    nstate_join(&terms, term);
+    nstate_lpush(&term_final->next->epsilon, term);
 
     // introduce a dummy node to handle concatenation. this ensures any `<term>`
     // within a `<regex>` is up surrounded by a pair of epsilon transitions to
@@ -394,27 +451,6 @@ struct nstate *parse_regex(char **regex, char **error) {
     nstate_lpush(&terms_final->epsilon, epsilon);
     assert(!terms->lnext);       // initial state shall have no `lnext`
     assert(!terms->next->lnext); // final state shall have no `lnext`
-
-    if (*error)
-      break;
-
-    // concatenation. move `term->next` (the final state of `term`) to between
-    // `*terms` and `*terms->next` (so it becomes the final state of `terms`)
-    struct nstate *term_final = term->next;
-    term->next = term_final->next;
-    term_final->next = terms->next;
-    terms->next = term_final;
-    nstate_join(&terms, term);
-    nstate_lpush(&term_final->next->epsilon, term);
-  }
-  if (strchr(")|", *last_regex)) { // hacky lookahead for better diagnostics
-    // backtrack
-    *regex = last_regex;
-    *error = NULL;
-  }
-  if (*error) {
-    nfa_free(terms);
-    return NULL;
   }
 
   if (**regex == '|') {

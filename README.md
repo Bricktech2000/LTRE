@@ -6,30 +6,38 @@ _A linear-time regular expression engine_
 
 LTRE is a regular expression library written in C99 which has no dependencies but the C standard library. It parses regular expressions into NFAs then compiles them down to DFAs for linear-time matching.
 
-## Syntax
+## Syntax and Semantics
 
-See [grammar.bnf](grammar.bnf) for the syntax specification. Note that:
+See [grammar.bnf](grammar.bnf) for the regular expression grammar specification. As an informal quick reference, note that:
 
-- Metacharacters within character classes must be escaped (with a backslash).
-- To include `-` in a character class, ensure it is not preceeded by a literal.
-- To include `^` in a character class, ensure it is not the first class character.
-- `.` does not match newlines; to match any character including newlines, use `[^]`.
+- Character classes may be nested.
+- Character ranges may appear outside character classes.
+- Metacharacters within character classes must be escaped to be matched literally.
+- Character classes may be negated by prefixing the opening bracket with `^`.
+- Literal characters and character ranges may be negated by prefixing them with `^`.
+- `-` is considered a metacharacter; it may be matched literally by escaping it.
+- `.` does not match newlines; to match any character including newlines, use `^[]`.
 - The empty regular expression matches the empty word; to match no word, use `[]`.
 
-## Features
+Supported features are as follows:
 
-| Name                 | Example | Description                           |
-| -------------------- | ------- | ------------------------------------- |
-| Dot                  | `.`     | Matches any character but a newline   |
-| Literal Character    | `a`     | Matches the character `a`             |
-| Metacharacter Escape | `\+`    | Matches the metacharacter `+`         |
-| C-style Escape       | `\r`    | Matches the carriage return character |
-| Concatenation        | `ab`    | Matches `a` followed by `b`           |
-| Alternation          | `a\|b`  | Matches either `a` or `b`             |
-| Kleene Star          | `a*`    | Matches zero or more `a`s             |
-| Kleene Plus          | `a+`    | Matches one or more `a`s              |
-| Optional             | `a?`    | Matches zero or one `a`               |
-| Character Class      | `[ab]`  | Matches either `a` or `b`             |
-| Negated Class        | `[^ab]` | Matches any character but `a` or `b`  |
-| Character Range      | `[a-z]` | Matches any character from `a` to `z` |
-| Grouping             | `(ab)`  | Matches the subexpression `ab`        |
+| Name                   | Example | Explanation                           | Type                            |
+| ---------------------- | ------- | ------------------------------------- | ------------------------------- |
+| Character Literal      | `a`     | Matches the literal character `a`     | `literal`                       |
+| Metacharacter Literal  | `\+`    | Matches the literal metacharacter `+` | `literal`                       |
+| C-Style Escape Literal | `\r`    | Matches the carriage return character | `literal`                       |
+| Hex Escape Literal     | `\x41`  | Matches the ASCII character `A`       | `literal`                       |
+| Grouping               | `(ab)`  | Matches the subexpression `ab`        | `regex -> regex`                |
+| Kleene Star            | `a*`    | Matches zero or more `a`s             | `regex -> regex`                |
+| Kleene Plus            | `a+`    | Matches one or more `a`s              | `regex -> regex`                |
+| Optional               | `a?`    | Matches zero or one `a`               | `regex -> regex`                |
+| Concatenation          | `ab`    | Matches `a` followed by `b`           | `(regex, regex) -> regex`       |
+| Alternation            | `a\|b`  | Matches either `a` or `b`             | `(regex, regex) -> regex`       |
+| Shorthand Class        | `\d`    | Matches a digit character             | `charset`                       |
+| Character Negation     | `^a`    | Matches any character but `a`         | `charset -> charset`            |
+| Character Range        | `a-z`   | Matches any character from `a` to `z` | `(literal, literal) -> charset` |
+| Character Class        | `[abc]` | Matches either `a` or `b` or `c`      | `[charset] -> charset`          |
+
+C-style escape literals are supported for `abfnrtv`. Metacharacter escape literals are supported for `\.-^$*+?[]()|`. Shorthand classes are supported for `dDsSwW`. Semantically, the dot metacharacter is considered a shorthand class.
+
+`literal`s promote to `charset`s (forming a singleton set) and `charset`s promote to `regex`es (which match any single character from the set). Alternation has the lowest precedence, followed by concatenation, followed by quantifiers. At most one quantifier may be applied to a `regex` per grouping level, and at most one negation may be applied to a `charset` per character class level.

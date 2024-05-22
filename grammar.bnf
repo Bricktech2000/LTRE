@@ -1,8 +1,9 @@
-<regex> ::= <term>* ("|" <regex>)?
-<term> ::= <atom> ("*" | "+" | "?")?
-<atom> ::= <literal> | "(" <regex> ")" | "[" <class> "]" | "." | "^" | "$"
-<literal> ::= "\\" <escaped> | ? ' ' to '~' except <metachar> ?
-<escaped> ::= "a" | "b" | "f" | "n" | "r" | "t" | "v" | "x" <hexbyte> | <metachar>
+<regex> ::= <term>* ("|" <regex>)? # a regex is the union of a sequence of terms
+<term> ::= <atom> ("*" | "+" | "?")? # a term is a quantified atom
+<atom> ::= <charset> | "(" <regex> ")" # an atom is either a charset or a subregex
+<charset> ::= "^"? (<shorthand> | <literal> ("-" <literal>)? | "[" <charset>* "]") # a charset is a set of literals
+<shorthand> ::= "\\d" | "\\D" | "\\s" | "\\S" | "\\w" | "\\W" | "." # a shorthand is a predefined set of literals
+<literal> ::= "\\" <escape> | ? ' ' to '~' except <metachar> ? # a literal is one character
+<escape> ::= "a" | "b" | "f" | "n" | "r" | "t" | "v" | "x" <hexbyte> | <metachar> # an escape is one special character
 <hexbyte> ::= (? '0' to '9' or 'a' to 'f' or 'A' to 'F' ?){2}
-<metachar> ::= "\\" | "." | "^" | "$" | "*" | "+" | "?" | "[" | "]" | "(" | ")" | "|"
-<class> ::= "^"? (<literal> ("-" <literal>)?)*
+<metachar> ::= "\\" | "." | "-" | "^" | "$" | "*" | "+" | "?" | "[" | "]" | "(" | ")" | "|"
