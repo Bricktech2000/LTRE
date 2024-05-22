@@ -6,6 +6,24 @@ _A linear-time regular expression engine_
 
 LTRE is a regular expression library written in C99 which has no dependencies but the C standard library. It parses regular expressions into NFAs then compiles them down to DFAs for linear-time matching.
 
+For sample regular expressions, see the test suite [test.c](test.c). For a more realistic use-case, see the minimal command-line search tool [ltrep.c](ltrep.c).
+
+## Usage
+
+To build and run the test suite:
+
+```bash
+make test
+bin/test # should have no output
+```
+
+To build and run the minimal search tool:
+
+```bash
+make ltrep
+bin/ltrep '"(^[\\"]|\\^[])*"' ltre.c
+```
+
 ## Syntax and Semantics
 
 See [grammar.bnf](grammar.bnf) for the regular expression grammar specification. As an informal quick reference, note that:
