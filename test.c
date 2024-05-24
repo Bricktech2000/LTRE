@@ -3,7 +3,7 @@
 #include <stdlib.h>
 
 void test(char *regex, char *input, bool errors, bool matches) {
-  struct nstate *nfa = ltre_parse(regex);
+  struct nstate *nfa = ltre_parse(&regex, NULL);
   if ((nfa == NULL) != errors)
     fprintf(stderr, "test failed: /%s/ parse\n", regex);
 
@@ -79,7 +79,7 @@ int main(void) {
   match(re, "\"foo\\\\\"");
   match(re, "\"foo\\nbar\"");
 
-  // syntax errors
+  // parse errors
   syntax("abc)", "");
   syntax("(abc", "");
   syntax("abc]", "");

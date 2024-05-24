@@ -21,6 +21,7 @@ To build and run the minimal search tool:
 
 ```bash
 make ltrep
+bin/ltrep -h # displays usage
 bin/ltrep '"(^[\\"]|\\^[])*"' ltre.c
 ```
 

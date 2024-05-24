@@ -11,10 +11,10 @@ typedef uint8_t charset_t[256 / 8]; // for parser
 // as a DFA, `*dstate` is the initial state
 struct dstate {
   struct dstate *transitions[256];
+  bool accepting;
   struct dstate *next;  // to keep track of all states
   struct dstate *qnext; // to form linked queue during powerset construction
-  bool accepting;
-  uint8_t bitset[]; // powerset representation during powerset construction
+  uint8_t bitset[];     // powerset representation during powerset construction
 };
 
 // as an NFA, `*nstate` is the initial state and `nstate->next` is the final
@@ -203,18 +203,21 @@ uint8_t parse_escape(char **regex, char **error) {
   }
 
   --*regex;
-  *error = "unknown escape sequence";
+  *error = "unknown escape";
   return 0;
 }
 
 uint8_t parse_literal(char **regex, char **error) {
   if (**regex == '\\') {
     ++*regex;
-    uint8_t escaped = parse_escape(regex, error);
-    if (*error)
+    uint8_t escape = parse_escape(regex, error);
+    if (*error) {
+      --*regex;
+      *error = "unknown escape sequence";
       return 0;
+    }
 
-    return escaped;
+    return escape;
   }
 
   if (**regex == '\0') {
@@ -475,21 +478,27 @@ struct nstate *parse_regex(char **regex, char **error) {
   return terms;
 }
 
-struct nstate *ltre_parse(char *regex) {
-  // returns `NULL` on error
+struct nstate *ltre_parse(char **regex, char **error) {
+  // returns `NULL` on error; `regex` will point to the error location and
+  // `error` will be set to an error message. `error` may be set to `NULL`
+  // to suppress error messages
 
-  char *error = NULL;
-  struct nstate *nfa = parse_regex(&regex, &error);
-  if (!error && *regex != '\0') {
-    error = "expected end of input";
-    nfa_free(nfa);
-  }
+  char *e; // throwaway
+  if (!error)
+    error = &e;
 
-  if (error)
-    // fprintf(stderr, "ltre: error: %s near '%s'\n", error, regex);
+  *error = NULL;
+  struct nstate *nfa = parse_regex(regex, error);
+  if (*error)
     return NULL;
 
-  assert(*regex == '\0'); // sanity check
+  if (**regex != '\0') {
+    *error = "expected end of input";
+    nfa_free(nfa);
+    return NULL;
+  }
+
+  assert(nfa); // sanity check
   return nfa;
 }
 
@@ -556,7 +565,7 @@ struct dstate *ltre_compile_full(struct nstate *nfa) {
 }
 
 struct dstate *ltre_compile_part(struct nstate *nfa) {
-  // partial match. effectively, surround the NFA between two `[^]*`s
+  // partial match. effectively, surround the NFA by a pair of `^[]*`s
   for (int chr = 0; chr < 256; chr++) {
     nstate_lpush(&nfa->transitions[chr], nfa);
     nstate_lpush(&nfa->next->transitions[chr], nfa->next);
