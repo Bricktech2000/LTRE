@@ -10,7 +10,7 @@ void test(char *regex, char *input, bool errors, bool matches) {
   if (nfa == NULL)
     return;
 
-  struct dstate *dfa = ltre_compile_full(nfa);
+  struct dstate *dfa = ltre_compile(nfa);
   if (ltre_matches(dfa, (uint8_t *)input) != matches)
     fprintf(stderr, "test failed: /%s/ against '%s'\n", regex, input);
 

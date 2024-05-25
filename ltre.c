@@ -64,9 +64,9 @@ void nstate_join(struct nstate **nstatep, struct nstate *nstate) {
 struct dstate *dstate_alloc(int bitset_size) {
   struct dstate *dstate = malloc(sizeof(struct dstate) + bitset_size);
   memset(dstate->transitions, 0, sizeof(dstate->transitions));
+  dstate->accepting = false;
   dstate->next = NULL;
   dstate->qnext = NULL;
-  dstate->accepting = false;
   memset(dstate->bitset, 0, bitset_size);
   return dstate;
 }
@@ -481,11 +481,12 @@ struct nstate *parse_regex(char **regex, char **error) {
 struct nstate *ltre_parse(char **regex, char **error) {
   // returns `NULL` on error; `regex` will point to the error location and
   // `error` will be set to an error message. `error` may be set to `NULL`
-  // to suppress error messages
+  // to disable error reporting
 
-  char *e; // throwaway
-  if (!error)
-    error = &e;
+  // don't write to `*regex` or `*error` if error reporting is disabled
+  char *e, *r = *regex;
+  if (error == NULL)
+    error = &e, regex = &r;
 
   *error = NULL;
   struct nstate *nfa = parse_regex(regex, error);
@@ -514,7 +515,7 @@ void epsilon_closure(struct nstate *nstate, uint8_t bitset[]) {
   }
 }
 
-struct dstate *ltre_compile_full(struct nstate *nfa) {
+struct dstate *ltre_compile(struct nstate *nfa) {
   // full match. powerset construction
 
   int nfa_size = 0;
@@ -564,14 +565,33 @@ struct dstate *ltre_compile_full(struct nstate *nfa) {
   return head;
 }
 
-struct dstate *ltre_compile_part(struct nstate *nfa) {
-  // partial match. effectively, surround the NFA by a pair of `^[]*`s
+void ltre_partial(struct nstate *nfa) {
+  // enable partial matching. effectively, surround the NFA by a pair of `^[]*`s
   for (int chr = 0; chr < 256; chr++) {
     nstate_lpush(&nfa->transitions[chr], nfa);
     nstate_lpush(&nfa->next->transitions[chr], nfa->next);
   }
+}
 
-  return ltre_compile_full(nfa);
+void ltre_ignorecase(struct nstate *nfa) {
+  // enable case-insensitive matching. that is, ensure all transitions point to
+  // the same set of states as their swapped-case counterpart
+  for (struct nstate *nstate = nfa; nstate; nstate = nstate->next) {
+    for (int chr = 0; chr <= 256; chr++) {
+      int lower = tolower(chr), upper = toupper(chr);
+      if (nstate->transitions[upper] == nstate->transitions[lower])
+        continue; // already case-insensitive
+      else if (nstate->transitions[upper] == NULL)
+        nstate->transitions[upper] = nstate->transitions[lower];
+      else if (nstate->transitions[lower] == NULL)
+        nstate->transitions[lower] = nstate->transitions[upper];
+      else
+        // both the `upper` and the `lower` transitions exist and point to
+        // different sets of states. because of the way we parse `charset`s,
+        // this should never happen. abort if it does
+        abort();
+    }
+  }
 }
 
 bool ltre_matches(struct dstate *dfa, uint8_t *input) {

@@ -16,6 +16,7 @@ struct dstate {
 struct opts {
   bool invert; // -v
   bool full;   // -x
+  bool ignore; // -i
   bool lineno; // -n
   bool count;  // -c
   char *regex; // <regex>
@@ -31,6 +32,7 @@ struct opts {
   "Options:\n"                                                                 \
   "  -v  invert match; print non-matching lines\n"                             \
   "  -x  full match; match against whole lines\n"                              \
+  "  -i  ignore case; match case-insensitively\n"                              \
   "  -n  prefix matched lines with line number\n"                              \
   "  -c  only print a count of matched lines\n"                                \
   "  -h  display this help message and exit\n"
@@ -52,6 +54,9 @@ struct opts parse_opts(int argc, char **argv) {
       break;
     case 'x':
       opts.full = true;
+      break;
+    case 'i':
+      opts.ignore = true;
       break;
     case 'n':
       opts.lineno = true;
@@ -85,8 +90,11 @@ int main(int argc, char **argv) {
   if (nfa == NULL)
     fprintf(stderr, "parse error: %s near '%.16s'\n", error, regex),
         exit(EXIT_FAILURE);
-  struct dstate *dfa =
-      opts.full ? ltre_compile_full(nfa) : ltre_compile_part(nfa);
+  if (!opts.full)
+    ltre_partial(nfa);
+  if (opts.ignore)
+    ltre_ignorecase(nfa);
+  struct dstate *dfa = ltre_compile(nfa);
 
   int lineno = 0;
   int count = 0;
@@ -109,17 +117,21 @@ int main(int argc, char **argv) {
       lineno++;
       if (dstate->accepting ^ opts.invert) {
         count++;
+        if (opts.count)
+          goto contin;
         if (opts.lineno)
           printf("%d:", lineno);
-        if (!opts.count)
-          fwrite(line, sizeof(uint8_t), curr - line + 1, stdout);
+        fwrite(line, sizeof(uint8_t), curr - line + 1, stdout);
       }
+    contin:
       line = curr + 1;
       dstate = dfa;
     }
-
     if (curr != line)
       goto write;
+
+    if (close(fd) == -1)
+      perror("close"), exit(EXIT_FAILURE);
   } else {
     // read from stdin
     uint8_t *line = NULL;
@@ -129,10 +141,11 @@ int main(int argc, char **argv) {
       lineno++;
       if (ltre_matches(dfa, line) ^ opts.invert) {
         count++;
+        if (opts.count)
+          continue;
         if (opts.lineno)
           printf("%d:", lineno);
-        if (!opts.count)
-          fwrite(line, sizeof(uint8_t), nread, stdout);
+        fwrite(line, sizeof(uint8_t), nread, stdout);
       }
     }
     if (errno)
