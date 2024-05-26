@@ -5,8 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define METACHARS "\\.-^$*+?[]()|"  // for parser
-typedef uint8_t charset_t[256 / 8]; // for parser
+#define METACHARS "\\.-^$*+?[]<>()|" // for parser
+typedef uint8_t symset_t[256 / 8];   // for parser
 
 // as a DFA, `*dstate` is the initial state
 struct dstate {
@@ -207,7 +207,7 @@ uint8_t parse_escape(char **regex, char **error) {
   return 0;
 }
 
-uint8_t parse_literal(char **regex, char **error) {
+uint8_t parse_symbol(char **regex, char **error) {
   if (**regex == '\\') {
     ++*regex;
     uint8_t escape = parse_escape(regex, error);
@@ -221,7 +221,7 @@ uint8_t parse_literal(char **regex, char **error) {
   }
 
   if (**regex == '\0') {
-    *error = "expected literal";
+    *error = "expected symbol";
     return 0;
   }
 
@@ -237,8 +237,8 @@ uint8_t parse_literal(char **regex, char **error) {
   return 0;
 }
 
-void parse_shorthand(charset_t charset, char **regex, char **error) {
-  // `charset` shall be zeroed
+void parse_shorthand(symset_t symset, char **regex, char **error) {
+  memset(symset, 0x00, sizeof(symset_t));
 
   if (**regex == '\\') {
     ++*regex;
@@ -246,32 +246,32 @@ void parse_shorthand(charset_t charset, char **regex, char **error) {
     case 'd':
       for (int chr = 0; chr < 256; chr++)
         if (isdigit(chr))
-          bitset_set(charset, chr);
+          bitset_set(symset, chr);
       return;
     case 'D':
       for (int chr = 0; chr < 256; chr++)
         if (!isdigit(chr))
-          bitset_set(charset, chr);
+          bitset_set(symset, chr);
       return;
     case 's':
       for (int chr = 0; chr < 256; chr++)
         if (isspace(chr))
-          bitset_set(charset, chr);
+          bitset_set(symset, chr);
       return;
     case 'S':
       for (int chr = 0; chr < 256; chr++)
         if (!isspace(chr))
-          bitset_set(charset, chr);
+          bitset_set(symset, chr);
       return;
     case 'w':
       for (int chr = 0; chr < 256; chr++)
         if (chr == '_' || isalnum(chr))
-          bitset_set(charset, chr);
+          bitset_set(symset, chr);
       return;
     case 'W':
       for (int chr = 0; chr < 256; chr++)
         if (chr != '_' && !isalnum(chr))
-          bitset_set(charset, chr);
+          bitset_set(symset, chr);
       return;
     }
     --*regex, --*regex;
@@ -281,7 +281,7 @@ void parse_shorthand(charset_t charset, char **regex, char **error) {
     ++*regex;
     for (int chr = 0; chr < 256; chr++)
       if (chr != '\n')
-        bitset_set(charset, chr);
+        bitset_set(symset, chr);
     return;
   }
 
@@ -289,15 +289,13 @@ void parse_shorthand(charset_t charset, char **regex, char **error) {
   return;
 }
 
-void parse_charset(charset_t charset, char **regex, char **error) {
-  // `charset` shall be zeroed
-
+void parse_symset(symset_t symset, char **regex, char **error) {
   bool invert = false;
   if (**regex == '^')
     ++*regex, invert = true;
 
   char *last_regex = *regex;
-  parse_shorthand(charset, regex, error);
+  parse_shorthand(symset, regex, error);
   if (!*error)
     goto process_invert;
   *error = NULL;
@@ -306,19 +304,20 @@ void parse_charset(charset_t charset, char **regex, char **error) {
   if (**regex == '[') {
     ++*regex;
 
-    // backwards compatibility
+    // backwards compatibility, if necessary
     // if (**regex == '^')
     //   ++*regex, invert ^= true;
 
+    memset(symset, 0x00, sizeof(symset_t));
     // hacky lookahead for better diagnostics
     while (!strchr("]", **regex)) {
-      charset_t class = {0};
-      parse_charset(class, regex, error);
+      symset_t sub;
+      parse_symset(sub, regex, error);
       if (*error)
         return;
 
-      for (int i = 0; i < sizeof(charset_t); i++)
-        charset[i] |= class[i];
+      for (int i = 0; i < sizeof(symset_t); i++)
+        symset[i] |= sub[i];
     }
 
     if (**regex != ']') {
@@ -331,12 +330,38 @@ void parse_charset(charset_t charset, char **regex, char **error) {
   }
   *regex = last_regex;
 
-  uint8_t begin = parse_literal(regex, error);
+  if (**regex == '<') {
+    ++*regex;
+
+    memset(symset, 0xff, sizeof(symset_t));
+    // hacky lookahead for better diagnostics
+    while (!strchr(">", **regex)) {
+      // TODO rename
+      symset_t sub;
+      parse_symset(sub, regex, error);
+      if (*error)
+        return;
+
+      for (int i = 0; i < sizeof(symset_t); i++)
+        symset[i] &= sub[i];
+    }
+
+    if (**regex != '>') {
+      *error = "expected '>'";
+      return;
+    }
+
+    ++*regex;
+    goto process_invert;
+  }
+  *regex = last_regex;
+
+  uint8_t begin = parse_symbol(regex, error);
   if (!*error) {
     uint8_t end = begin;
     if (**regex == '-') {
       ++*regex;
-      end = parse_literal(regex, error);
+      end = parse_symbol(regex, error);
       if (!*error && begin > end) {
         *regex = last_regex;
         *error = "invalid character range";
@@ -345,16 +370,17 @@ void parse_charset(charset_t charset, char **regex, char **error) {
         return;
     }
 
+    memset(symset, 0x00, sizeof(symset_t));
     for (int chr = begin; chr <= end; chr++)
-      bitset_set(charset, chr);
+      bitset_set(symset, chr);
     goto process_invert;
   }
   return;
 
 process_invert:
   if (invert)
-    for (int i = 0; i < sizeof(charset_t); i++)
-      charset[i] = ~charset[i];
+    for (int i = 0; i < sizeof(symset_t); i++)
+      symset[i] = ~symset[i];
   return;
 }
 
@@ -376,8 +402,8 @@ struct nstate *parse_atom(char **regex, char **error) {
     return sub;
   }
 
-  charset_t bitset = {0};
-  parse_charset(bitset, regex, error);
+  symset_t bitset;
+  parse_symset(bitset, regex, error);
   if (*error)
     return NULL;
 
@@ -442,11 +468,13 @@ struct nstate *parse_regex(char **regex, char **error) {
     nstate_join(&terms, term);
     nstate_lpush(&term_final->next->epsilon, term);
 
+  epsilon:;
     // introduce a dummy node to handle concatenation. this ensures any `<term>`
-    // within a `<regex>` is up surrounded by a pair of epsilon transitions to
-    // and from states **which have no `lnext`**. the quantifier parsers assume
-    // this invariant. these gymnastics are necessary because `nstate->epsilon`
-    // is a linked list of `nstate`s, not of `nstate` pointers
+    // within a `<regex>` is surrounded by a pair of epsilon transitions to
+    // and from states **which have no `lnext`**. the quantifier parsers in
+    // `parse_term` assume this invariant. these gymnastics are necessary
+    // because `nstate->epsilon` is a linked list of `nstate`s and not of
+    // `nstate` pointers
     struct nstate *epsilon = nstate_alloc();
     struct nstate *terms_final = terms->next;
     epsilon->next = terms_final;
@@ -455,6 +483,12 @@ struct nstate *parse_regex(char **regex, char **error) {
     assert(!terms->lnext);       // initial state shall have no `lnext`
     assert(!terms->next->lnext); // final state shall have no `lnext`
   }
+
+  // ensure the initial and final states of `terms` are not joined by a single
+  // epsilon transition. the quantifier parsers `?` and `*` in `parse_term`
+  // assume this invariant
+  if (terms->epsilon == terms->next)
+    goto epsilon;
 
   if (**regex == '|') {
     ++*regex;
@@ -566,7 +600,7 @@ struct dstate *ltre_compile(struct nstate *nfa) {
 }
 
 void ltre_partial(struct nstate *nfa) {
-  // enable partial matching. effectively, surround the NFA by a pair of `^[]*`s
+  // enable partial matching. effectively, surround the NFA by a pair of `<>*`s
   for (int chr = 0; chr < 256; chr++) {
     nstate_lpush(&nfa->transitions[chr], nfa);
     nstate_lpush(&nfa->next->transitions[chr], nfa->next);
@@ -587,7 +621,7 @@ void ltre_ignorecase(struct nstate *nfa) {
         nstate->transitions[lower] = nstate->transitions[upper];
       else
         // both the `upper` and the `lower` transitions exist and point to
-        // different sets of states. because of the way we parse `charset`s,
+        // different sets of states. because of the way we `parse_symset`s,
         // this should never happen. abort if it does
         abort();
     }

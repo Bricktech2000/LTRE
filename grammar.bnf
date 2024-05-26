@@ -1,9 +1,9 @@
-<regex> ::= <term>* ("|" <regex>)? # a regex is the union of a sequence of terms
+<regex> ::= <term>* ("|" <regex>)? # a regex is the alternation of a sequence of terms
 <term> ::= <atom> ("*" | "+" | "?")? # a term is a quantified atom
-<atom> ::= <charset> | "(" <regex> ")" # an atom is either a charset or a subregex
-<charset> ::= "^"? (<shorthand> | <literal> ("-" <literal>)? | "[" <charset>* "]") # a charset is a set of literals
-<shorthand> ::= "\\d" | "\\D" | "\\s" | "\\S" | "\\w" | "\\W" | "." # a shorthand is a predefined set of literals
-<literal> ::= "\\" <escape> | ? ' ' to '~' except <metachar> ? # a literal is one character
-<escape> ::= "a" | "b" | "f" | "n" | "r" | "t" | "v" | "x" <hexbyte> | <metachar> # an escape is one special character
+<atom> ::= <symset> | "(" <regex> ")" # an atom is either a symset or a subregex
+<symset> ::= "^"? (<shorthand> | <symbol> ("-" <symbol>)? | "[" <symset>* "]" | "<" <symset>* ">") # a symset is a set of symbols
+<shorthand> ::= "\\d" | "\\D" | "\\s" | "\\S" | "\\w" | "\\W" | "." # a shorthand is a predefined symset
+<symbol> ::= "\\" <escape> | ? ' ' to '~' except <metachar> ? # a symbol matches a single character
+<escape> ::= "a" | "b" | "f" | "n" | "r" | "t" | "v" | "x" <hexbyte> | <metachar> # an escape is a symbol alias
 <hexbyte> ::= (? '0' to '9' or 'a' to 'f' or 'A' to 'F' ?){2}
-<metachar> ::= "\\" | "." | "-" | "^" | "$" | "*" | "+" | "?" | "[" | "]" | "(" | ")" | "|"
+<metachar> ::= "\\" | "." | "-" | "^" | "$" | "*" | "+" | "?" | "[" | "]" | "<" | ">" | "(" | ")" | "|"

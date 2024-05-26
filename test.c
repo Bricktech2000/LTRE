@@ -34,12 +34,18 @@ int main(void) {
   match("\\x61\\+", "a+");
   match("", "");
   nomatch("[]", "");
+  nomatch("[]+", "");
+  match("[]*", "");
+  match("[]?", "");
+  match("()", "");
+  match("()+", "");
+  match("()*", "");
+  match("()?", "");
   nomatch("", "\n");
   match("\\n", "\n");
   nomatch(".", "\n");
-  match("^[]", "\n");
-  nomatch("[\\-n]", "\n");
-  match("(||n)(\\n)", "\n");
+  nomatch("\\\\n", "\n");
+  match("(|n)(\\n)", "\n");
   match("\\r?\\n", "\n");
   match("\\r?\\n", "\r\n");
   match("(a+)+", "aa");
@@ -66,7 +72,7 @@ int main(void) {
   nomatch("x*y+", "yxy");
 
   // realistic regexes
-  char *re = "\"(^[\\\\\"]|\\\\^[])*\"";
+  char *re = "\"(^[\\\\\"]|\\\\<>)*\"";
   nomatch(re, "foo");
   nomatch(re, "\"foo");
   nomatch(re, "foo \"bar\"");
@@ -80,10 +86,12 @@ int main(void) {
   match(re, "\"foo\\nbar\"");
 
   // parse errors
-  syntax("abc)", "");
-  syntax("(abc", "");
   syntax("abc]", "");
   syntax("[abc", "");
+  syntax("abc>", "");
+  syntax("<abc", "");
+  syntax("abc)", "");
+  syntax("(abc", "");
   syntax("[a?b]", "");
   syntax("[b-a]", "");
   syntax("[a-]", "");
@@ -124,12 +132,24 @@ int main(void) {
   nomatch("^[^a^b]", "a");
   nomatch("^[^a^b]", "b");
   nomatch("^[^a^b]", "");
+  nomatch("<ab>", "a");
+  nomatch("<ab>", "b");
+  nomatch("<ab>", "");
   match("\\^", "^");
   nomatch("^\\^", "^");
   match("^[^\\^]", "^");
   match("^[ ^[a b c]]+", "abc");
   nomatch("^[ ^[a b c]]+", "a c");
+  match("<[a b c]^ >+", "abc");
+  nomatch("<[a b c]^ >+", "a c");
   match("^[^0-74]+", "0123567");
   nomatch("^[^0-74]+", "89");
   nomatch("^[^0-74]+", "4");
+  match("<0-7^4>+", "0123567");
+  nomatch("<0-7^4>+", "89");
+  nomatch("<0-7^4>+", "4");
+  nomatch("[]", " ");
+  match("^[]", " ");
+  match("<>", " ");
+  nomatch("^<>", " ");
 }
