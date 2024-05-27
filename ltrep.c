@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -11,6 +12,7 @@
 struct dstate {
   struct dstate *transitions[256];
   bool accepting;
+  bool terminating;
 };
 
 struct opts {
@@ -107,11 +109,15 @@ int main(int argc, char **argv) {
     size_t len = lseek(fd, 0, SEEK_END);
     uint8_t *data = mmap(0, len, PROT_READ, MAP_PRIVATE, fd, 0);
 
+    // intertwine `ltre_matches` within walking the file for maximum performance
     struct dstate *dstate = dfa;
     uint8_t *line = data, *curr = data;
     for (; curr < data + len; curr++) {
       dstate = dstate->transitions[*curr];
-      if (*curr != '\n')
+      if (dstate->terminating) {
+        curr = memchr(curr, '\n', data + len - curr);
+        curr = curr ? curr : data + len;
+      } else if (*curr != '\n')
         continue;
     write:
       lineno++;

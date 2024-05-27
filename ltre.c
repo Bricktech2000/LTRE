@@ -12,6 +12,7 @@ typedef uint8_t symset_t[256 / 8];   // for parser
 struct dstate {
   struct dstate *transitions[256];
   bool accepting;
+  bool terminating;
   struct dstate *next;  // to keep track of all states
   struct dstate *qnext; // to form linked queue during powerset construction
   uint8_t bitset[];     // powerset representation during powerset construction
@@ -65,6 +66,7 @@ struct dstate *dstate_alloc(int bitset_size) {
   struct dstate *dstate = malloc(sizeof(struct dstate) + bitset_size);
   memset(dstate->transitions, 0, sizeof(dstate->transitions));
   dstate->accepting = false;
+  dstate->terminating = false;
   dstate->next = NULL;
   dstate->qnext = NULL;
   memset(dstate->bitset, 0, bitset_size);
@@ -336,7 +338,6 @@ void parse_symset(symset_t symset, char **regex, char **error) {
     memset(symset, 0xff, sizeof(symset_t));
     // hacky lookahead for better diagnostics
     while (!strchr(">", **regex)) {
-      // TODO rename
       symset_t sub;
       parse_symset(sub, regex, error);
       if (*error)
@@ -592,7 +593,21 @@ struct dstate *ltre_compile(struct nstate *nfa) {
     }
 
     elem->accepting = bitset_get(elem->bitset, nfa->next->id);
+    elem->terminating = true; // default to true for below
   }
+
+  // flag "terminating" states. a terminating state is a state which either
+  // always or never leads to an accepting state. a state is terminating if and
+  // only if all its transitions are terminating and have the same `accepting`
+  // value as that state. to avoid having to deal with cycles, we default to all
+  // states being terminating then iteratively rule out the ones that aren't.
+  for (bool done = false; (done = !done);)
+    for (struct dstate *elem = head; elem; elem = elem->qnext)
+      if (elem->terminating)
+        for (int chr = 0; chr < 256; chr++)
+          if (elem->accepting != elem->transitions[chr]->accepting ||
+              !elem->transitions[chr]->terminating)
+            done = elem->terminating = false;
 
   // dfa_dump(head);
 
@@ -630,7 +645,7 @@ void ltre_ignorecase(struct nstate *nfa) {
 
 bool ltre_matches(struct dstate *dfa, uint8_t *input) {
   // time linear in the input length :)
-  for (; *input; input++)
+  for (; !dfa->terminating && *input; input++)
     dfa = dfa->transitions[*input];
   return dfa->accepting;
 }
