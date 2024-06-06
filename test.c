@@ -93,7 +93,6 @@ int main(void) {
   syntax("abc)", "");
   syntax("(abc", "");
   syntax("[a?b]", "");
-  syntax("[b-a]", "");
   syntax("[a-]", "");
   syntax("[--]", "");
   syntax("[-]", "");
@@ -108,7 +107,7 @@ int main(void) {
   syntax("a-", "");
   syntax("^^a", "");
 
-  // nonstandard syntax
+  // nonstandard features
   match("^a", "z");
   nomatch("^a", "a");
   match("^\\n", "\r");
@@ -152,4 +151,12 @@ int main(void) {
   match("^[]", " ");
   match("<>", " ");
   nomatch("^<>", " ");
+  match("9-0*", "abc");
+  nomatch("9-0*", "18");
+  match("9-0*", "09");
+  match("9-0*", "/:");
+  match("b-a*", "ab");
+  match("a-b*", "ab");
+  nomatch("a-a*", "ab");
+  match("a-a*", "aa");
 }

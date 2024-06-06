@@ -30,6 +30,7 @@ bin/ltrep '"(^[\\"]|\\<>)*"' ltre.c
 See [grammar.bnf](grammar.bnf) for the regular expression grammar specification. As an informal quick reference, note that:
 
 - Character classes may be nested.
+- Character ranges support wraparound.
 - Character ranges may appear outside character classes.
 - Metacharacters within character classes must be escaped to be matched literally.
 - Character classes may be negated by prefixing the opening bracket with `^`.

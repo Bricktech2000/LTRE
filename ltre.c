@@ -363,17 +363,16 @@ void parse_symset(symset_t symset, char **regex, char **error) {
     if (**regex == '-') {
       ++*regex;
       end = parse_symbol(regex, error);
-      if (!*error && begin > end) {
-        *regex = last_regex;
-        *error = "invalid character range";
-      }
       if (*error)
         return;
     }
 
+    end++; // open upper bound
     memset(symset, 0x00, sizeof(symset_t));
-    for (int chr = begin; chr <= end; chr++)
+    uint8_t chr = begin;
+    do
       bitset_set(symset, chr);
+    while (++chr != end);
     goto process_invert;
   }
   return;
@@ -428,14 +427,14 @@ struct nstate *parse_term(char **regex, char **error) {
     nstate_lpush(&atom->epsilon, atom->next);
   }
 
-  if (**regex == '?') {
-    ++*regex;
-    nstate_lpush(&atom->epsilon, atom->next);
-  }
-
   if (**regex == '+') {
     ++*regex;
     nstate_lpush(&atom->next->epsilon, atom);
+  }
+
+  if (**regex == '?') {
+    ++*regex;
+    nstate_lpush(&atom->epsilon, atom->next);
   }
 
   struct nstate *nfa = nstate_alloc();
