@@ -38,27 +38,32 @@ See [grammar.bnf](grammar.bnf) for the regular expression grammar specification.
 - `-<>` are considered metacharacters; they may be matched literally by escaping them.
 - `.` does not match newlines; to match any character including newlines, use `<>`.
 - The empty regular expression matches the empty word; to match no word, use `[]`.
+- The lower bound of bounded quantifiers may be omitted and defaults to `0`.
 
 Supported features are as follows:
 
-| Name                 | Example | Explanation                           | Type                         |
-| -------------------- | ------- | ------------------------------------- | ---------------------------- |
-| Character Literal    | `a`     | Matches the character `a`             | `symbol`                     |
-| Metacharacter Escape | `\+`    | Matches the metacharacter `+`         | `symbol`                     |
-| C-Style Escape       | `\r`    | Matches the carriage return character | `symbol`                     |
-| Hexadecimal Escape   | `\x41`  | Matches the ASCII character `A`       | `symbol`                     |
-| Grouping             | `(ab)`  | Matches the subexpression `ab`        | `regex -> regex`             |
-| Kleene Star          | `a*`    | Matches zero or more `a`s             | `regex -> regex`             |
-| Kleene Plus          | `a+`    | Matches one or more `a`s              | `regex -> regex`             |
-| Optional             | `a?`    | Matches zero or one `a`               | `regex -> regex`             |
-| Concatenation        | `ab`    | Matches `a` followed by `b`           | `(regex, regex) -> regex`    |
-| Alternation          | `a\|b`  | Matches either `a` or `b`             | `(regex, regex) -> regex`    |
-| Shorthand Class      | `\d`    | Matches a digit character             | `symset`                     |
-| Complement           | `^a`    | Matches any character not in `a`      | `symset -> symset`           |
-| Character Range      | `a-z`   | Matches any character from `a` to `z` | `(symbol, symbol) -> symset` |
-| Character Class      | `[ab]`  | Matches any character in `a` or `b`   | `[symset] -> symset`         |
-| Intersection         | `<ab>`  | Matches any character in `a` and `b`  | `[symset] -> symset`         |
+| Name                 | Example  | Explanation                           | Type                         |
+| -------------------- | -------- | ------------------------------------- | ---------------------------- |
+| Character Literal    | `a`      | Matches the character `a`             | `symbol`                     |
+| Metacharacter Escape | `\+`     | Matches the metacharacter `+`         | `symbol`                     |
+| C-Style Escape       | `\r`     | Matches the carriage return character | `symbol`                     |
+| Hexadecimal Escape   | `\x41`   | Matches the ASCII character `A`       | `symbol`                     |
+| Grouping             | `(ab)`   | Matches the subexpression `ab`        | `regex -> regex`             |
+| Kleene Star          | `a*`     | Matches zero or more `a`s             | `regex -> regex`             |
+| Kleene Plus          | `a+`     | Matches one or more `a`s              | `regex -> regex`             |
+| Optional             | `a?`     | Matches zero or one `a`               | `regex -> regex`             |
+| Exact Repetition     | `a{4}`   | Matches exactly 4 `a`s                | `regex -> regex`             |
+| Bounded Repetition   | `a{3,5}` | Matches 3 to 5 `a`s                   | `regex -> regex`             |
+| Bounded Below        | `a{3,}`  | Matches at least 3 `a`s               | `regex -> regex`             |
+| Bounded Above        | `a{,5}`  | Matches at most 5 `a`s                | `regex -> regex`             |
+| Concatenation        | `ab`     | Matches `a` followed by `b`           | `(regex, regex) -> regex`    |
+| Alternation          | `a\|b`   | Matches either `a` or `b`             | `(regex, regex) -> regex`    |
+| Shorthand Class      | `\d`     | Matches a digit character             | `symset`                     |
+| Complement           | `^a`     | Matches any character not in `a`      | `symset -> symset`           |
+| Character Range      | `a-z`    | Matches any character from `a` to `z` | `(symbol, symbol) -> symset` |
+| Character Class      | `[ab]`   | Matches any character in `a` or `b`   | `[symset] -> symset`         |
+| Intersection         | `<ab>`   | Matches any character in `a` and `b`  | `[symset] -> symset`         |
 
-C-style escapes are supported for `abfnrtv`. Metacharacter escapes are supported for `\.-^$*+?[]<>()|`. Shorthand classes are supported for `dDsSwW`. Semantically, the dot metacharacter is considered a shorthand class.
+C-style escapes are supported for `abfnrtv`. Metacharacter escapes are supported for `\.-^$*+?{}[]<>()|`. Shorthand classes are supported for `dDsSwW`. Semantically, the dot metacharacter is considered a shorthand class.
 
 `symbol`s promote to `symset`s (forming a singleton set) and `symset`s promote to `regex`es (which match any single character from the set). Alternation has the lowest precedence, followed by concatenation, followed by quantifiers. At most one quantifier may be applied to a `regex` per grouping level, and at most one complement may be applied to a `symset` per character class level.

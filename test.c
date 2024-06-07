@@ -31,15 +31,17 @@ int main(void) {
   match("[ab]+", "abba");
   nomatch("[ab]+", "abc");
   match(".*", "abba");
+  match("(a|b+){3}", "abbba");
+  nomatch("(a|b+){3}", "abbab");
   match("\\x61\\+", "a+");
   match("", "");
   nomatch("[]", "");
-  nomatch("[]+", "");
   match("[]*", "");
+  nomatch("[]+", "");
   match("[]?", "");
   match("()", "");
-  match("()+", "");
   match("()*", "");
+  match("()+", "");
   match("()?", "");
   nomatch("", "\n");
   match("\\n", "\n");
@@ -48,8 +50,8 @@ int main(void) {
   match("(|n)(\\n)", "\n");
   match("\\r?\\n", "\n");
   match("\\r?\\n", "\r\n");
-  match("(a+)+", "aa");
   match("(a*)*", "a");
+  match("(a+)+", "aa");
   match("(a?)?", "");
   match("a+", "aa");
   nomatch("a?", "aa");
@@ -59,10 +61,10 @@ int main(void) {
   nomatch("a+", "");
   match("(a+|)+", "aa");
   match("(a+|)+", "");
-  match("x+|", "xx");
-  match("x+|", "");
   match("x*|", "xx");
   match("x*|", "");
+  match("x+|", "xx");
+  match("x+|", "");
   match("x?|", "x");
   match("x?|", "");
   nomatch("x*y*", "yx");
@@ -70,6 +72,23 @@ int main(void) {
   nomatch("x?y?", "yx");
   nomatch("x+y*", "xyx");
   nomatch("x*y+", "yxy");
+  nomatch("a{1,2}", "");
+  match("a{1,2}", "a");
+  match("a{1,2}", "aa");
+  nomatch("a{1,2}", "aaa");
+  nomatch("a{1,}", "");
+  match("a{1,}", "a");
+  match("a{1,}", "aa");
+  match("a{1,}", "aaa");
+  match("a{0,2}", "");
+  match("a{0,2}", "a");
+  match("a{0,2}", "aa");
+  nomatch("a{0,2}", "aaa");
+  nomatch("a{2}", "a");
+  match("a{2}", "aa");
+  nomatch("a{2}", "aaa");
+  match("a{0}", "");
+  nomatch("a{0}", "a");
 
   // realistic regexes
   char *re = "\"(^[\\\\\"]|\\\\<>)*\"";
@@ -106,6 +125,25 @@ int main(void) {
   syntax("-", "");
   syntax("a-", "");
   syntax("^^a", "");
+  syntax("a**", "");
+  syntax("a*+", "");
+  syntax("a*?", "");
+  syntax("a*{}", "");
+  syntax("a+*", "");
+  syntax("a++", "");
+  syntax("a+?", "");
+  syntax("a+{}", "");
+  syntax("a?*", "");
+  syntax("a?+", "");
+  syntax("a??", "");
+  syntax("a?{}", "");
+  syntax("a{}*", "");
+  syntax("a{}+", "");
+  syntax("a{}?", "");
+  syntax("a{}{}", "");
+  syntax("a{2,1}", "");
+  syntax("a{1 2}", "");
+  syntax("a{1, 2}", "");
 
   // nonstandard features
   match("^a", "z");
@@ -159,4 +197,10 @@ int main(void) {
   match("a-b*", "ab");
   nomatch("a-a*", "ab");
   match("a-a*", "aa");
+  match("a{,2}", "");
+  match("a{,2}", "a");
+  match("a{,2}", "aa");
+  nomatch("a{,2}", "aaa");
+  match("a{}", "");
+  nomatch("a{}", "a");
 }
