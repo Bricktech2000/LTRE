@@ -6,5 +6,5 @@
 <symbol> ::= "\\" <escape> | ? ' ' to '~' except <metachar> ? # a symbol matches a single character
 <escape> ::= "a" | "b" | "f" | "n" | "r" | "t" | "v" | "x" <hexbyte> | <metachar> # an escape is a symbol alias
 <hexbyte> ::= (? '0' to '9' or 'a' to 'f' or 'A' to 'F' ?){2}
-<metachar> ::= "\\" | "." | "-" | "^" | "$" | "*" | "+" | "?" | "[" | "]" | "<" | ">" | "(" | ")" | "|"
+<metachar> ::= "\\" | "." | "-" | "^" | "$" | "*" | "+" | "?" | "{" | "}" | "[" | "]" | "<" | ">" | "(" | ")" | "|"
 <natural> ::= (? '0' to '9' ?)+

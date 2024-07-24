@@ -111,7 +111,7 @@ struct dstate *dstate_alloc(int bitset_size) {
   dstate->terminating = false;
   dstate->next = NULL;
   dstate->qnext = NULL;
-  memset(dstate->bitset, 0, bitset_size);
+  memset(dstate->bitset, 0x00, bitset_size);
   return dstate;
 }
 
@@ -148,12 +148,12 @@ struct dstate *dfa_random(int dfa_size) {
 
 void dfa_dump(struct dstate *dfa) {
   printf("graph LR\n");
-  printf("  I( ) --> %u\n", 0);
+  printf("  I( ) --> %d\n", 0);
 
   int id1 = 0;
   for (struct dstate *dfa1 = dfa; dfa1; dfa1 = dfa1->next, id1++) {
     if (dfa1->accepting)
-      printf("  %u --> F( )\n", id1);
+      printf("  %d --> F( )\n", id1);
 
     int id2 = 0;
     for (struct dstate *dfa2 = dfa; dfa2; dfa2 = dfa2->next, id2++) {
@@ -190,7 +190,7 @@ void dfa_dump(struct dstate *dfa) {
         continue;
 
       // spaces around `%s` for 'x', 'o', '<', '>'
-      printf("  %u -- %s --> %u\n", id1, buf, id2);
+      printf("  %d -- %s --> %d\n", id1, buf, id2);
     }
   }
 }
@@ -477,19 +477,19 @@ struct nstate *parse_term(char **regex, char **error) {
     ++*regex;
     nstate_lpush(&atom->next->epsilon, atom);
     nstate_lpush(&atom->epsilon, atom->next);
-    goto pad_nfa;
+    goto pad_atom;
   }
 
   if (**regex == '+') {
     ++*regex;
     nstate_lpush(&atom->next->epsilon, atom);
-    goto pad_nfa;
+    goto pad_atom;
   }
 
   if (**regex == '?') {
     ++*regex;
     nstate_lpush(&atom->epsilon, atom->next);
-    goto pad_nfa;
+    goto pad_atom;
   }
 
   char *last_regex = *regex;
@@ -539,10 +539,10 @@ struct nstate *parse_term(char **regex, char **error) {
       nstate_lpush(&atom->next->epsilon, atom);
 
     nfa_free(template);
-    goto pad_nfa;
+    goto pad_atom;
   }
 
-pad_nfa:;
+pad_atom:;
   struct nstate *nfa = nstate_alloc();
   nfa->next = nstate_alloc();
   nstate_lpush(&nfa->epsilon, atom);
@@ -631,7 +631,7 @@ struct nstate *ltre_parse(char **regex, char **error) {
     return NULL;
   }
 
-  assert(nfa); // sanity check
+  assert(nfa);
   return nfa;
 }
 
@@ -666,7 +666,7 @@ struct dstate *ltre_compile(struct nstate *nfa) {
   for (struct dstate *elem = head; elem; elem = elem->qnext) {
     for (int chr = 0; chr < 256; chr++) {
       uint8_t bitset_union[bitset_size];
-      memset(bitset_union, 0, bitset_size);
+      memset(bitset_union, 0x00, bitset_size);
 
       for (int id = 0; id < nfa_size; id++)
         if (bitset_get(elem->bitset, id))

@@ -66,4 +66,4 @@ Supported features are as follows:
 
 C-style escapes are supported for `abfnrtv`. Metacharacter escapes are supported for `\.-^$*+?{}[]<>()|`. Shorthand classes are supported for `dDsSwW`. Semantically, the dot metacharacter is considered a shorthand class.
 
-`symbol`s promote to `symset`s (forming a singleton set) and `symset`s promote to `regex`es (which match any single character from the set). Alternation has the lowest precedence, followed by concatenation, followed by quantifiers. At most one quantifier may be applied to a `regex` per grouping level, and at most one complement may be applied to a `symset` per character class level.
+`symbol`s promote to `symset`s (forming a singleton set) and `symset`s promote to `regex`es (which match any single character from the set). Alternation has the lowest precedence, followed by concatenation, followed by quantifiers. At most one quantifier may be applied to a `regex` per grouping level, and at most one complement may be applied to a `symset` per character class or intersection level.
