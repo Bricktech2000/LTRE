@@ -87,15 +87,15 @@ struct opts parse_opts(int argc, char **argv) {
 int main(int argc, char **argv) {
   struct opts opts = parse_opts(argc, argv);
 
-  char *error, *regex = opts.regex;
-  struct nstate *nfa = ltre_parse(&regex, &error);
-  if (nfa == NULL)
-    fprintf(stderr, "parse error: %s near '%.16s'\n", error, regex),
+  char *error = NULL, *loc = opts.regex;
+  struct nfa nfa = ltre_parse(&loc, &error);
+  if (error)
+    fprintf(stderr, "parse error: %s near '%.16s'\n", error, loc),
         exit(EXIT_FAILURE);
   if (!opts.full)
-    ltre_partial(nfa);
+    ltre_partial(&nfa);
   if (opts.ignore)
-    ltre_ignorecase(nfa);
+    ltre_ignorecase(&nfa);
   struct dstate *dfa = ltre_compile(nfa);
 
   int lineno = 0;

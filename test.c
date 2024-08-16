@@ -2,13 +2,23 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-void test(char *regex, char *input, bool errors, bool matches) {
-  struct nstate *nfa = ltre_parse(&regex, NULL);
-  if ((nfa == NULL) != errors)
-    fprintf(stderr, "test failed: /%s/ parse\n", regex);
+void test(char *regex, char *input, bool partial, bool ignorecase, bool errors,
+          bool matches) {
+  char *error = NULL, *loc = regex;
+  struct nfa nfa = ltre_parse(&loc, &error);
 
-  if (nfa == NULL)
+  if (!!error != errors)
+    fprintf(stderr, "test failed: /%s/ parse\n", regex);
+  // if (error)
+  //   fprintf(stderr, "note: /%s/ %s near '%.16s'\n", regex, error, loc);
+
+  if (error)
     return;
+
+  if (partial)
+    ltre_partial(&nfa);
+  if (ignorecase)
+    ltre_ignorecase(&nfa);
 
   struct dstate *dfa = ltre_compile(nfa);
   if (ltre_matches(dfa, (uint8_t *)input) != matches)
@@ -17,14 +27,22 @@ void test(char *regex, char *input, bool errors, bool matches) {
   nfa_free(nfa), dfa_free(dfa);
 }
 
-void match(char *input, char *regex) { test(input, regex, false, true); }
-void nomatch(char *input, char *regex) { test(input, regex, false, false); }
-void syntax(char *input, char *regex) { test(input, regex, true, false); }
+#define error(input, regex) test(input, regex, false, false, true, false);
+#define match(input, regex) test(input, regex, false, false, false, true);
+#define nomatch(input, regex) test(input, regex, false, false, false, false);
+#define pmatch(input, regex) test(input, regex, true, false, false, true);
+#define pnomatch(input, regex) test(input, regex, true, false, false, false);
+#define imatch(input, regex) test(input, regex, false, true, false, true);
+#define inomatch(input, regex) test(input, regex, false, true, false, false);
 
 int main(void) {
   // catastrophic backtracking
   nomatch("(a*)*c", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
   nomatch("(x+x+)+y", "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
+
+  // exponential blowout
+  match("[01]*1[01]{8}", "11011100011100");
+  nomatch("[01]*1[01]{8}", "01010010010010");
 
   // potential edge cases
   match("abba", "abba");
@@ -43,6 +61,7 @@ int main(void) {
   match("()*", "");
   match("()+", "");
   match("()?", "");
+  match(" ", " ");
   nomatch("", "\n");
   match("\\n", "\n");
   nomatch(".", "\n");
@@ -72,14 +91,27 @@ int main(void) {
   nomatch("x?y?", "yx");
   nomatch("x+y*", "xyx");
   nomatch("x*y+", "yxy");
+  nomatch("x*|y*", "xy");
+  nomatch("x+|y+", "xy");
+  nomatch("x?|y?", "xy");
+  nomatch("x+|y*", "xy");
+  nomatch("x*|y+", "xy");
   nomatch("a{1,2}", "");
   match("a{1,2}", "a");
   match("a{1,2}", "aa");
   nomatch("a{1,2}", "aaa");
+  match("a{0,}", "");
+  match("a{0,}", "a");
+  match("a{0,}", "aa");
+  match("a{0,}", "aaa");
   nomatch("a{1,}", "");
   match("a{1,}", "a");
   match("a{1,}", "aa");
   match("a{1,}", "aaa");
+  nomatch("a{3,}", "aa");
+  match("a{3,}", "aaa");
+  match("a{3,}", "aaaa");
+  match("a{3,}", "aaaaa");
   match("a{0,2}", "");
   match("a{0,2}", "a");
   match("a{0,2}", "aa");
@@ -89,6 +121,17 @@ int main(void) {
   nomatch("a{2}", "aaa");
   match("a{0}", "");
   nomatch("a{0}", "a");
+
+  // partial and ignorecase
+  pmatch("", "");
+  pmatch("", "abc");
+  pmatch("b", "abc");
+  pnomatch("ba", "abc");
+  pmatch("abc", "abc");
+  pnomatch("[]", "");
+  imatch("", "");
+  imatch("abCdEF", "aBCdEf");
+  inomatch("ab", "abc");
 
   // realistic regexes
   char *re = "\"(^[\\\\\"]|\\\\<>)*\"";
@@ -105,45 +148,27 @@ int main(void) {
   match(re, "\"foo\\nbar\"");
 
   // parse errors
-  syntax("abc]", "");
-  syntax("[abc", "");
-  syntax("abc>", "");
-  syntax("<abc", "");
-  syntax("abc)", "");
-  syntax("(abc", "");
-  syntax("[a?b]", "");
-  syntax("[a-]", "");
-  syntax("[--]", "");
-  syntax("[-]", "");
-  syntax("+a", "");
-  syntax("a+*", "");
-  syntax("a|*", "");
-  syntax("\\x0", "");
-  syntax("\\zzz", "");
-  syntax("[a\\x]", "");
-  syntax("\a", "");
-  syntax("-", "");
-  syntax("a-", "");
-  syntax("^^a", "");
-  syntax("a**", "");
-  syntax("a*+", "");
-  syntax("a*?", "");
-  syntax("a*{}", "");
-  syntax("a+*", "");
-  syntax("a++", "");
-  syntax("a+?", "");
-  syntax("a+{}", "");
-  syntax("a?*", "");
-  syntax("a?+", "");
-  syntax("a??", "");
-  syntax("a?{}", "");
-  syntax("a{}*", "");
-  syntax("a{}+", "");
-  syntax("a{}?", "");
-  syntax("a{}{}", "");
-  syntax("a{2,1}", "");
-  syntax("a{1 2}", "");
-  syntax("a{1, 2}", "");
+  error("abc]", "");
+  error("[abc", "");
+  error("abc)", "");
+  error("(abc", "");
+  error("+a", "");
+  error("a|*", "");
+  error("\\x0", "");
+  error("\\zzz", "");
+  error("[a\\x]", "");
+  error("\a", "");
+  error("\n", "");
+  error("^^a", "");
+  error("a**", "");
+  error("a*+", "");
+  error("a*?", "");
+  error("a+*", "");
+  error("a++", "");
+  error("a+?", "");
+  error("a?*", "");
+  error("a?+", "");
+  error("a??", "");
 
   // nonstandard features
   match("^a", "z");
@@ -203,4 +228,25 @@ int main(void) {
   nomatch("a{,2}", "aaa");
   match("a{}", "");
   nomatch("a{}", "a");
+  match("a{,}", "");
+  match("a{,}", "a");
+  error("abc>", "");
+  error("<abc", "");
+  error("[a?b]", "");
+  error("[a-]", "");
+  error("[--]", "");
+  error("[-]", "");
+  error("-", "");
+  error("a-", "");
+  error("a*{}", "");
+  error("a+{}", "");
+  error("a?{}", "");
+  error("a{}*", "");
+  error("a{}+", "");
+  error("a{}?", "");
+  error("a{}{}", "");
+  error("a{2,1}", "");
+  error("a{1 2}", "");
+  error("a{1, 2}", "");
+  error("a{a}", "");
 }

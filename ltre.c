@@ -5,145 +5,195 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define METACHARS "\\.-^$*+?{}[]<>()|" // for parser
-typedef uint8_t symset_t[256 / 8];     // for parser
+#define METACHARS "\\.-^$*+?{}[]<>()|"
+typedef uint8_t symset_t[256 / 8];
 
-// as a DFA, `*dstate` is the initial state
-struct dstate {
-  struct dstate *transitions[256];
-  bool accepting;
-  bool terminating;
-  struct dstate *next;  // to keep track of all states
-  struct dstate *qnext; // to form linked queue during powerset construction
-  uint8_t bitset[];     // powerset representation during powerset construction
-};
-
-// as an NFA, `*nstate` is the initial state and `nstate->next` is the final
-// state. we support epsilon transitions and therefore can assume NFAs have a
-// unique final state without loss of generality
+// an NFA state. we can assume NFA states have at most two outgoing epsilon
+// transitions and at most one outgoing labeled transition without loss of
+// generality. so regexes like /./ and /\w/ don't blow out NFA size, we label
+// the labeled transition with a set of characters (using `symset_t`) instead
+// of with a single character
 struct nstate {
-  struct nstate *transitions[256]; // linked list formed by `lnext`
-  struct nstate *epsilon;          // linked list formed by `lnext`
-  struct nstate *next;             // to keep track of all states
-  struct nstate *lnext; // to form linked list for `transitions` and `epsilon`
-  int id;               // initialized during powerset construction
+  symset_t label;          // set of characters labeling the labeled transition
+  struct nstate *target;   // target state for the labeled transition
+  struct nstate *epsilon0; // primary epsilon transition, for concatenation
+  struct nstate *epsilon1; // secondary epsilon transition, for anything else
+  struct nstate *next;     // linked list to keep track of all states of an NFA
+  int id;                  // populated and used for various purposes throughout
 };
 
-struct nstate *nstate_alloc() {
+// a DFA state, and maybe an actual DFA too, depending on context. when treated
+// as a DFA, the first element of the linked list of states formed by `next` is
+// the initial state and subsequent elements enumerate all remaining states
+struct dstate {
+  struct dstate *transitions[256]; // indexed by input characters
+  bool accepting;                  // match result
+  bool terminating;                // for early termination
+  struct dstate *next; // linked list to keep track of all states of a DFA
+  uint8_t bitset[];    // powerset representation during powerset construction
+};
+
+static bool bitset_get(uint8_t bitset[], int id) {
+  return bitset[id / 8] & 1 << id % 8;
+}
+
+static void bitset_set(uint8_t bitset[], int id) {
+  bitset[id / 8] |= 1 << id % 8;
+}
+
+static char *symset_fmt(symset_t symset) {
+  // pretty-format for debugging
+
+  static char buf[1024], nbuf[1024];
+  char *bufp = buf, *nbufp = nbuf;
+
+  *nbufp++ = '^';
+  *bufp++ = *nbufp++ = '[';
+
+  for (int chr = 0; chr < 256; chr++) {
+  append_chr:;
+    char **p = bitset_get(symset, chr) ? &bufp : &nbufp;
+    bool is_metachar = chr && strchr(METACHARS, chr);
+    if (!isprint(chr) && !is_metachar)
+      *p += sprintf(*p, "\\x%02hhx", chr);
+    else {
+      if (is_metachar)
+        *(*p)++ = '\\';
+      // avoid breaking Mermaid
+      if (strchr("\"#&{}()xo=-", chr))
+        *p += sprintf(*p, "#%hhu;", chr);
+      else
+        *(*p)++ = chr;
+    }
+
+    // make character ranges
+    int start = chr;
+    while (chr < 255 && bitset_get(symset, chr) == bitset_get(symset, chr + 1))
+      chr++;
+    if (chr - start >= 2)
+      *(*p)++ = '-';
+    if (chr - start >= 1)
+      goto append_chr;
+  }
+
+  *bufp++ = *nbufp++ = ']';
+  *bufp++ = *nbufp++ = '\0';
+
+  // return a negated character class if it is shorter
+  return (bufp - buf < nbufp - nbuf) ? buf : nbuf;
+}
+
+static struct nstate *nstate_alloc(void) {
   struct nstate *nstate = malloc(sizeof(struct nstate));
-  memset(nstate->transitions, 0, sizeof(nstate->transitions));
-  nstate->epsilon = NULL;
+  memset(nstate->label, 0x00, sizeof(symset_t));
+  nstate->target = NULL;
+  nstate->epsilon0 = NULL;
+  nstate->epsilon1 = NULL;
   nstate->next = NULL;
-  nstate->lnext = NULL;
   nstate->id = -1;
   return nstate;
 }
 
-void nfa_free(struct nstate *nstate) {
-  while (nstate) {
-    struct nstate *next = nstate->next;
-    free(nstate);
-    nstate = next;
-  }
+void nfa_free(struct nfa nfa) {
+  for (struct nstate *next, *nstate = nfa.states; nstate; nstate = next)
+    next = nstate->next, free(nstate);
 }
 
-int nfa_get_size(struct nstate *nfa) {
+static int nfa_get_size(struct nfa nfa) {
   // also populates `nstate->id` with unique identifiers
   int nfa_size = 0;
-  for (struct nstate *nstate = nfa; nstate; nstate = nstate->next)
+  for (struct nstate *nstate = nfa.states; nstate; nstate = nstate->next)
     nstate->id = nfa_size++;
   return nfa_size;
 }
 
-struct nstate *nfa_clone(struct nstate *nfa) {
+static struct nfa nfa_clone(struct nfa nfa) {
   int nfa_size = nfa_get_size(nfa);
 
   struct nstate *nstates[nfa_size];
   for (int id = 0; id < nfa_size; id++)
     nstates[id] = nstate_alloc();
 
-  for (struct nstate *nstate = nfa; nstate; nstate = nstate->next) {
-    for (int chr = 0; chr < 256; chr++)
-      if (nstate->transitions[chr])
-        nstates[nstate->id]->transitions[chr] =
-            nstates[nstate->transitions[chr]->id];
-    if (nstate->epsilon)
-      nstates[nstate->id]->epsilon = nstates[nstate->epsilon->id];
-    if (nstate->next)
-      nstates[nstate->id]->next = nstates[nstate->next->id];
-    if (nstate->lnext)
-      nstates[nstate->id]->lnext = nstates[nstate->lnext->id];
+#define MAYBE_COPY(FIELD)                                                      \
+  if (nstate->FIELD)                                                           \
+    nstates[nstate->id]->FIELD = nstates[nstate->FIELD->id];
+
+  for (struct nstate *nstate = nfa.states; nstate; nstate = nstate->next) {
+    memcpy(nstates[nstate->id]->label, nstate->label, sizeof(symset_t));
+    MAYBE_COPY(target);
+    MAYBE_COPY(epsilon0);
+    MAYBE_COPY(epsilon1);
+    MAYBE_COPY(next);
   }
 
-  return nstates[nfa->id];
+#undef MAYBE_COPY
+
+  return (struct nfa){
+      .initial = nstates[nfa.initial->id],
+      .final = nstates[nfa.final->id],
+      .states = nstates[nfa.states->id],
+  };
 }
 
-void nstate_lpush(struct nstate **nstatep, struct nstate *nstate) {
-  // pushes to the beginning, with respect to `lnext`
-  assert(nstate->lnext == NULL); // assert not already part of a list
-  assert(nstate != *nstatep);    // assert not a self loop
-  nstate->lnext = *nstatep;
-  *nstatep = nstate;
-}
-
-void nstate_join(struct nstate **nstatep, struct nstate *nstate) {
-  // appends to the end, with respect to `next`
+static void nstate_join(struct nstate **nstatep, struct nstate *nstate) {
+  // appends one `next` linked list onto the end of another
   while (*nstatep)
     nstatep = &(*nstatep)->next;
   *nstatep = nstate;
 }
 
-void nfa_concat(struct nstate *nfa, struct nstate *other) {
-  // concatenate NFAs. move `other->next` (the final state of `other`) to
-  // between `*nfa` and `*nfa->next` (so it becomes the final state of `nfa`)
-  struct nstate *nfa_final = other->next;
-  other->next = nfa_final->next;
-  nfa_final->next = nfa->next;
-  nfa->next = nfa_final;
-  nstate_join(&nfa, other);
-  nstate_lpush(&nfa_final->next->epsilon, other);
+static void nfa_pad(struct nfa *nfa, bool pad_initial, bool pad_final) {
+  // prepends and/or appends padding states with no `epsilon1` nor `target`
+  // to an NFA. mostly used for normalization, say by calling `nfa_pad(&nfa,
+  // nfa.initial->epsilon1, nfa.final->epsilon1)`
+
+  if (pad_initial) {
+    struct nstate *initial = nstate_alloc();
+    initial->epsilon0 = nfa->initial;
+    initial->next = nfa->states;
+    nfa->states = nfa->initial = initial;
+  }
+
+  if (pad_final) {
+    struct nstate *final = nstate_alloc();
+    nfa->final->epsilon0 = final;
+    final->next = nfa->states;
+    nfa->states = nfa->final = final;
+  }
 }
 
-struct dstate *dstate_alloc(int bitset_size) {
+void nfa_dump(struct nfa nfa) {
+  (void)nfa_get_size(nfa);
+
+  printf("graph LR\n");
+  printf("  I( ) --> %d\n", nfa.initial->id);
+  printf("  %d --> F( )\n", nfa.final->id);
+
+  for (struct nstate *nstate1 = nfa.states; nstate1; nstate1 = nstate1->next) {
+    if (nstate1->epsilon0)
+      printf("  %d --> %d\n", nstate1->id, nstate1->epsilon0->id);
+    if (nstate1->epsilon1)
+      printf("  %d --> %d\n", nstate1->id, nstate1->epsilon1->id);
+
+    char *fmt = symset_fmt(nstate1->label);
+    if (strcmp(fmt, "[]") != 0)
+      printf("  %d --%s--> %d\n", nstate1->id, fmt, nstate1->target->id);
+  }
+}
+
+static struct dstate *dstate_alloc(int bitset_size) {
   struct dstate *dstate = malloc(sizeof(struct dstate) + bitset_size);
   memset(dstate->transitions, 0, sizeof(dstate->transitions));
   dstate->accepting = false;
   dstate->terminating = false;
   dstate->next = NULL;
-  dstate->qnext = NULL;
   memset(dstate->bitset, 0x00, bitset_size);
   return dstate;
 }
 
 void dfa_free(struct dstate *dstate) {
-  while (dstate) {
-    struct dstate *next = dstate->next;
-    free(dstate);
-    dstate = next;
-  }
-}
-
-bool bitset_get(uint8_t bitset[], int id) {
-  return bitset[id / 8] & 1 << id % 8;
-}
-
-void bitset_set(uint8_t bitset[], int id) { bitset[id / 8] |= 1 << id % 8; }
-
-struct dstate *dfa_random(int dfa_size) {
-  struct dstate *dfas[dfa_size];
-  for (int id = 0; id < dfa_size; id++)
-    dfas[id] = dstate_alloc(0);
-
-  struct dstate *dfa = NULL;
-  for (int id = dfa_size; id--;) {
-    dfas[id]->next = dfa;
-    dfa = dfas[id];
-    dfa->accepting = rand() % 2;
-    for (int chr = 0; chr < 256; chr++)
-      dfa->transitions[chr] = dfas[rand() % dfa_size];
-  }
-
-  return dfas[0];
+  for (struct dstate *next; dstate; dstate = next)
+    next = dstate->next, free(dstate);
 }
 
 void dfa_dump(struct dstate *dfa) {
@@ -157,50 +207,25 @@ void dfa_dump(struct dstate *dfa) {
 
     int id2 = 0;
     for (struct dstate *dfa2 = dfa; dfa2; dfa2 = dfa2->next, id2++) {
-      char buf[256 + 1];
-      char *bufp = buf;
-      int first, last = '\0';
+      symset_t transitions = {0};
+      for (int chr = 0; chr < 256; chr++)
+        if (dfa1->transitions[chr] == dfa2)
+          bitset_set(transitions, chr);
 
-      for (int chr = ' '; chr <= '~'; chr++) {
-        // avoid breaking Mermaid
-        if (chr == ' ' || chr == '"' || chr == '-')
-          continue;
-
-        // print ranges
-        if (dfa1->transitions[chr] == dfa2) {
-          if (!last)
-            *bufp++ = first = chr;
-          last = chr;
-        } else if (last) {
-        close_off:
-          if (last - first >= 2)
-            *bufp++ = '-';
-          if (last - first >= 1)
-            *bufp++ = last;
-          last = '\0';
-        }
-      }
-
-      if (last)
-        goto close_off;
-      *bufp = '\0';
-
-      // don't print empty transitions
-      if (buf == bufp)
-        continue;
-
-      // spaces around `%s` for 'x', 'o', '<', '>'
-      printf("  %d -- %s --> %d\n", id1, buf, id2);
+      char *fmt = symset_fmt(transitions);
+      if (strcmp(fmt, "[]") != 0)
+        printf("  %d --%s--> %d\n", id1, fmt, id2);
     }
   }
 }
 
-// some invariants for parsers on `error`:
-// - the NFA returned shall be `NULL`
+// some invariants for parsers on parse error:
+// - `error` shall be set to a non-`NULL` error message
 // - `regex` shall point to the error location
-// - the caller may backtrack if necessary
+// - the returned NFA shall be the null NFA
+// - the caller is responsible for backtracking
 
-unsigned parse_natural(char **regex, char **error) {
+static unsigned parse_natural(char **regex, char **error) {
   if (!isdigit(**regex)) {
     *error = "expected natural number";
     return 0;
@@ -212,7 +237,7 @@ unsigned parse_natural(char **regex, char **error) {
   return natural;
 }
 
-uint8_t parse_hexbyte(char **regex, char **error) {
+static uint8_t parse_hexbyte(char **regex, char **error) {
   uint8_t byte = 0;
   for (int i = 0; i < 2; i++) {
     byte <<= 4;
@@ -230,7 +255,7 @@ uint8_t parse_hexbyte(char **regex, char **error) {
   return byte;
 }
 
-uint8_t parse_escape(char **regex, char **error) {
+static uint8_t parse_escape(char **regex, char **error) {
   if (strchr(METACHARS, **regex))
     return *(*regex)++;
 
@@ -261,15 +286,12 @@ uint8_t parse_escape(char **regex, char **error) {
   return 0;
 }
 
-uint8_t parse_symbol(char **regex, char **error) {
+static uint8_t parse_symbol(char **regex, char **error) {
   if (**regex == '\\') {
     ++*regex;
     uint8_t escape = parse_escape(regex, error);
-    if (*error) {
-      --*regex;
-      *error = "unknown escape sequence";
+    if (*error)
       return 0;
-    }
 
     return escape;
   }
@@ -284,14 +306,15 @@ uint8_t parse_symbol(char **regex, char **error) {
     return 0;
   }
 
-  if (**regex >= ' ' && **regex <= '~')
-    return *(*regex)++;
+  if (!isprint(**regex)) {
+    *error = "unexpected nonprintable character";
+    return 0;
+  }
 
-  *error = "invalid character";
-  return 0;
+  return *(*regex)++;
 }
 
-void parse_shorthand(symset_t symset, char **regex, char **error) {
+static void parse_shorthand(symset_t symset, char **regex, char **error) {
   memset(symset, 0x00, sizeof(symset_t));
 
   if (**regex == '\\') {
@@ -343,7 +366,7 @@ void parse_shorthand(symset_t symset, char **regex, char **error) {
   return;
 }
 
-void parse_symset(symset_t symset, char **regex, char **error) {
+static void parse_symset(symset_t symset, char **regex, char **error) {
   bool invert = false;
   if (**regex == '^')
     ++*regex, invert = true;
@@ -436,60 +459,69 @@ process_invert:
   return;
 }
 
-struct nstate *parse_regex(char **regex, char **error);
-struct nstate *parse_atom(char **regex, char **error) {
+static struct nfa parse_regex(char **regex, char **error);
+static struct nfa parse_atom(char **regex, char **error) {
   if (**regex == '(') {
     ++*regex;
-    struct nstate *sub = parse_regex(regex, error);
+    struct nfa sub = parse_regex(regex, error);
     if (*error)
-      return NULL;
+      return (struct nfa){NULL};
 
     if (**regex != ')') {
       *error = "expected ')'";
       nfa_free(sub);
-      return NULL;
+      return (struct nfa){NULL};
     }
 
     ++*regex;
     return sub;
   }
 
-  symset_t bitset;
-  parse_symset(bitset, regex, error);
-  if (*error)
-    return NULL;
+  struct nfa chars = {.initial = nstate_alloc(), .final = nstate_alloc()};
+  chars.states = chars.initial, chars.states->next = chars.final;
+  chars.initial->target = chars.final;
 
-  struct nstate *chars = nstate_alloc();
-  chars->next = nstate_alloc();
-  for (int chr = 0; chr < 256; chr++)
-    if (bitset_get(bitset, chr))
-      nstate_lpush(&chars->transitions[chr], chars->next);
+  parse_symset(chars.initial->label, regex, error);
+  if (*error) {
+    nfa_free(chars);
+    return (struct nfa){NULL};
+  }
 
   return chars;
 }
 
-struct nstate *parse_term(char **regex, char **error) {
-  struct nstate *atom = parse_atom(regex, error);
+static struct nfa parse_term(char **regex, char **error) {
+  struct nfa atom = parse_atom(regex, error);
   if (*error)
-    return NULL;
+    return (struct nfa){NULL};
 
+  //     <---
+  // -->(atom)-->
+  //     --->
   if (**regex == '*') {
     ++*regex;
-    nstate_lpush(&atom->next->epsilon, atom);
-    nstate_lpush(&atom->epsilon, atom->next);
-    goto pad_atom;
+    nfa_pad(&atom, atom.initial->epsilon1, atom.final->epsilon1);
+    atom.final->epsilon1 = atom.initial;
+    atom.initial->epsilon1 = atom.final;
+    return atom;
   }
 
+  //     <---
+  // -->(atom)-->
   if (**regex == '+') {
     ++*regex;
-    nstate_lpush(&atom->next->epsilon, atom);
-    goto pad_atom;
+    nfa_pad(&atom, false, atom.final->epsilon1);
+    atom.final->epsilon1 = atom.initial;
+    return atom;
   }
 
+  // -->(atom)-->
+  //     --->
   if (**regex == '?') {
     ++*regex;
-    nstate_lpush(&atom->epsilon, atom->next);
-    goto pad_atom;
+    nfa_pad(&atom, atom.initial->epsilon1, false);
+    atom.initial->epsilon1 = atom.final;
+    return atom;
   }
 
   char *last_regex = *regex;
@@ -510,7 +542,7 @@ struct nstate *parse_term(char **regex, char **error) {
     if (**regex != '}') {
       *error = "expected '}'";
       nfa_free(atom);
-      return NULL;
+      return (struct nfa){NULL};
     }
     ++*regex;
 
@@ -518,102 +550,94 @@ struct nstate *parse_term(char **regex, char **error) {
       *regex = last_regex;
       *error = "misbounded quantifier";
       nfa_free(atom);
-      return NULL;
+      return (struct nfa){NULL};
     }
 
-    struct nstate *template = atom;
-    atom = nstate_alloc();
-    atom->next = nstate_alloc();
-    nstate_lpush(&atom->epsilon, atom->next);
+    struct nfa atoms;
+    atoms.initial = atoms.final = atoms.states = nstate_alloc();
 
-    unsigned ncopies = max == -1 ? min : max;
+    // if `max` is bounded, make `max` copies and add `?` epsilon transitions:
+    // -->(atom)-->...-->(atom)-->(atom)-->
+    //                    --->     --->
+    // if it is not, make `min + 1` copies and add one `*` epsilon transition:
+    //                             <---
+    // -->...-->(atom)-->(atom)-->(atom)-->
+    //                             --->
+    unsigned ncopies = max == -1 ? min + 1 : max;
     for (unsigned i = 0; i < ncopies; i++) {
-      struct nstate *instance = nfa_clone(template);
-      // add `?` epsilon transitions to uphold `min` bound
-      if (i >= min)
-        nstate_lpush(&instance->epsilon, instance->next);
-      nfa_concat(atom, instance);
-    }
-    // add a `+` epsilon transition if `max` is unbounded
-    if (max == -1)
-      nstate_lpush(&atom->next->epsilon, atom);
+      struct nfa clone = nfa_clone(atom);
+      if (i >= min) {
+        nfa_pad(&clone, clone.initial->epsilon1, false);
+        clone.initial->epsilon1 = clone.final;
+        if (max == -1) {
+          nfa_pad(&clone, false, clone.final->epsilon1);
+          clone.final->epsilon1 = clone.initial;
+        }
+      }
 
-    nfa_free(template);
-    goto pad_atom;
+      // optimization for left and right concatenation with the identity NFA
+      if (atoms.initial == atoms.final)
+        nfa_free(atoms), atoms = clone;
+      else if (clone.initial != clone.final) {
+        nstate_join(&atoms.states, clone.states);
+        atoms.final->epsilon0 = clone.initial;
+        atoms.final = clone.final;
+      }
+    }
+
+    nfa_free(atom);
+
+    return atoms;
   }
 
-pad_atom:;
-  struct nstate *nfa = nstate_alloc();
-  nfa->next = nstate_alloc();
-  nstate_lpush(&nfa->epsilon, atom);
-  nstate_lpush(&atom->next->epsilon, nfa->next);
-  nstate_join(&nfa, atom);
-
-  return nfa;
+  return atom;
 }
 
-struct nstate *parse_regex(char **regex, char **error) {
-  struct nstate *terms = nstate_alloc();
-  terms->next = nstate_alloc();
-  nstate_lpush(&terms->epsilon, terms->next);
+static struct nfa parse_regex(char **regex, char **error) {
+  struct nfa terms;
+  terms.initial = terms.final = terms.states = nstate_alloc();
 
   // hacky lookahead for better diagnostics
   while (!strchr(")|", **regex)) {
-    struct nstate *term = parse_term(regex, error);
+    struct nfa term = parse_term(regex, error);
     if (*error) {
       nfa_free(terms);
-      return NULL;
+      return (struct nfa){NULL};
     }
-    nfa_concat(terms, term);
 
-  epsilon:;
-    // introduce a dummy node to handle concatenation. this ensures any `<term>`
-    // within a `<regex>` is surrounded by a pair of epsilon transitions to
-    // and from states **which have no `lnext`**. the quantifier parsers in
-    // `parse_term` assume this invariant. these gymnastics are necessary
-    // because `nstate->epsilon` is a linked list of `nstate`s and not of
-    // `nstate` pointers
-    struct nstate *epsilon = nstate_alloc();
-    struct nstate *terms_final = terms->next;
-    epsilon->next = terms_final;
-    terms->next = epsilon;
-    nstate_lpush(&terms_final->epsilon, epsilon);
-    assert(!terms->lnext);       // initial state shall have no `lnext`
-    assert(!terms->next->lnext); // final state shall have no `lnext`
+    // optimization for left and right concatenation with the identity NFA
+    if (terms.initial == terms.final)
+      nfa_free(terms), terms = term;
+    else if (term.initial != term.final) {
+      nstate_join(&terms.states, term.states);
+      terms.final->epsilon0 = term.initial;
+      terms.final = term.final;
+    }
   }
-
-  // ensure the initial and final states of `terms` are not joined by a single
-  // epsilon transition. the quantifier parsers `?` and `*` in `parse_term`
-  // assume this invariant
-  if (terms->epsilon == terms->next)
-    goto epsilon;
 
   if (**regex == '|') {
     ++*regex;
-    struct nstate *alt = parse_regex(regex, error);
+    struct nfa alt = parse_regex(regex, error);
     if (*error) {
       nfa_free(terms);
-      return NULL;
+      return (struct nfa){NULL};
     }
 
-    struct nstate *nfa = nstate_alloc();
-    nfa->next = nstate_alloc();
-    nstate_join(&nfa, terms);
-    nstate_join(&nfa, alt);
-    nstate_lpush(&nfa->epsilon, terms);
-    nstate_lpush(&nfa->epsilon, alt);
-    nstate_lpush(&terms->next->epsilon, nfa->next);
-    nstate_lpush(&alt->next->epsilon, nfa->next);
-    return nfa;
+    // -->O-->(terms)-->O-->
+    //     --->(alt)--->
+    nfa_pad(&terms, true, true);
+    nstate_join(&terms.states, alt.states);
+    terms.initial->epsilon1 = alt.initial;
+    alt.final->epsilon0 = terms.final;
   }
 
   return terms;
 }
 
-struct nstate *ltre_parse(char **regex, char **error) {
-  // returns `NULL` on error; `regex` will point to the error location and
-  // `error` will be set to an error message. `error` may be set to `NULL`
-  // to disable error reporting
+struct nfa ltre_parse(char **regex, char **error) {
+  // returns a null NFA on error; `*regex` will point to the error location and
+  // `*error` will be set to an error message. `error` may be set to `NULL` to
+  // disable error reporting
 
   // don't write to `*regex` or `*error` if error reporting is disabled
   char *e, *r = *regex;
@@ -621,119 +645,118 @@ struct nstate *ltre_parse(char **regex, char **error) {
     error = &e, regex = &r;
 
   *error = NULL;
-  struct nstate *nfa = parse_regex(regex, error);
+  struct nfa nfa = parse_regex(regex, error);
   if (*error)
-    return NULL;
+    return (struct nfa){NULL};
 
   if (**regex != '\0') {
     *error = "expected end of input";
     nfa_free(nfa);
-    return NULL;
+    return (struct nfa){NULL};
   }
 
-  assert(nfa);
   return nfa;
 }
 
-void epsilon_closure(struct nstate *nstate, uint8_t bitset[]) {
+static void epsilon_closure(struct nstate *nstate, uint8_t bitset[]) {
   if (!nstate)
-    return; // improves performance?
+    return;
 
-  for (; nstate; nstate = nstate->lnext) {
-    if (bitset_get(bitset, nstate->id))
-      continue;
-    bitset_set(bitset, nstate->id);
-    epsilon_closure(nstate->epsilon, bitset);
-  }
+  if (bitset_get(bitset, nstate->id))
+    return; // already visited
+
+  bitset_set(bitset, nstate->id);
+  epsilon_closure(nstate->epsilon0, bitset);
+  epsilon_closure(nstate->epsilon1, bitset);
 }
 
-struct dstate *ltre_compile(struct nstate *nfa) {
+struct dstate *ltre_compile(struct nfa nfa) {
   // full match. powerset construction
 
   int nfa_size = nfa_get_size(nfa);
 
   // cache locality, probably
   struct nstate *nstates[nfa_size];
-  for (struct nstate *nstate = nfa; nstate; nstate = nstate->next)
+  for (struct nstate *nstate = nfa.states; nstate; nstate = nstate->next)
     nstates[nstate->id] = nstate;
 
   int bitset_size = (nfa_size + 7) / 8; // ceil
 
-  struct dstate *head = dstate_alloc(bitset_size);
-  epsilon_closure(nfa, head->bitset);
-  struct dstate *tail = head;
+  struct dstate *dfa = dstate_alloc(bitset_size);
+  epsilon_closure(nfa.initial, dfa->bitset);
 
-  for (struct dstate *elem = head; elem; elem = elem->qnext) {
+  // construct new DFA states as we're iterating over them and patching
+  // transitions, starting from the epsilon closure of the NFA's initial state
+  for (struct dstate *dstate = dfa; dstate; dstate = dstate->next) {
     for (int chr = 0; chr < 256; chr++) {
       uint8_t bitset_union[bitset_size];
       memset(bitset_union, 0x00, bitset_size);
 
+      // compute the "superposition" of NFA states reachable by consuming `chr`
       for (int id = 0; id < nfa_size; id++)
-        if (bitset_get(elem->bitset, id))
-          epsilon_closure(nstates[id]->transitions[chr], bitset_union);
+        if (bitset_get(dstate->bitset, id) &&
+            bitset_get(nstates[id]->label, chr))
+          epsilon_closure(nstates[id]->target, bitset_union);
 
-      // binary tree not necessary, this is just as fast
-      struct dstate **dstatep = &head;
+      // create a DFA state whose `bitset` corresponds to this "superposition",
+      // if it doesn't already exist. binary tree not necessary, linear search
+      // is just as fast
+      struct dstate **dstatep = &dfa;
       while (*dstatep && memcmp((*dstatep)->bitset, bitset_union, bitset_size))
         dstatep = &(*dstatep)->next;
 
       if (!*dstatep) {
         *dstatep = dstate_alloc(bitset_size);
         memcpy((*dstatep)->bitset, bitset_union, bitset_size);
-        tail->qnext = *dstatep;
-        tail = *dstatep;
       }
 
-      elem->transitions[chr] = *dstatep;
+      // patch the `chr` transition to point to this new (or existing) state
+      dstate->transitions[chr] = *dstatep;
     }
 
-    elem->accepting = bitset_get(elem->bitset, nfa->next->id);
-    elem->terminating = true; // default to true for below
+    // a DFA state is accepting if and only if it contains the NFA's final state
+    // in its `bitset`
+    dstate->accepting = bitset_get(dstate->bitset, nfa.final->id);
+    dstate->terminating = true; // default to true for below
   }
 
   // flag "terminating" states. a terminating state is a state which either
   // always or never leads to an accepting state. a state is terminating if and
   // only if all its transitions are terminating and have the same `accepting`
   // value as that state. to avoid having to deal with cycles, we default to all
-  // states being terminating then iteratively rule out the ones that aren't.
+  // states being terminating then iteratively rule out the ones that aren't
   for (bool done = false; (done = !done);)
-    for (struct dstate *elem = head; elem; elem = elem->qnext)
-      if (elem->terminating)
+    for (struct dstate *dstate = dfa; dstate; dstate = dstate->next)
+      if (dstate->terminating)
         for (int chr = 0; chr < 256; chr++)
-          if (elem->accepting != elem->transitions[chr]->accepting ||
-              !elem->transitions[chr]->terminating)
-            done = elem->terminating = false;
+          if (dstate->accepting != dstate->transitions[chr]->accepting ||
+              dstate->transitions[chr]->terminating == false)
+            dstate->terminating = false, done = false;
 
-  // dfa_dump(head);
+  // nfa_dump(nfa);
+  // dfa_dump(dfa);
 
-  return head;
+  return dfa;
 }
 
-void ltre_partial(struct nstate *nfa) {
+void ltre_partial(struct nfa *nfa) {
   // enable partial matching. effectively, surround the NFA by a pair of `<>*`s
-  for (int chr = 0; chr < 256; chr++) {
-    nstate_lpush(&nfa->transitions[chr], nfa);
-    nstate_lpush(&nfa->next->transitions[chr], nfa->next);
-  }
+  nfa_pad(nfa, nfa->initial->target, nfa->final->target);
+  nfa->initial->target = nfa->initial;
+  nfa->final->target = nfa->final;
+  memset(nfa->initial->label, 0xff, sizeof(symset_t));
+  memset(nfa->final->label, 0xff, sizeof(symset_t));
 }
 
-void ltre_ignorecase(struct nstate *nfa) {
-  // enable case-insensitive matching. that is, ensure all transitions point to
-  // the same set of states as their swapped-case counterpart
-  for (struct nstate *nstate = nfa; nstate; nstate = nstate->next) {
+void ltre_ignorecase(struct nfa *nfa) {
+  // enable case-insensitive matching. effectively, for any character a labeled
+  // transition contains, make it also contain its swapped-case counterpart
+  for (struct nstate *nstate = nfa->states; nstate; nstate = nstate->next) {
     for (int chr = 0; chr <= 256; chr++) {
-      int lower = tolower(chr), upper = toupper(chr);
-      if (nstate->transitions[upper] == nstate->transitions[lower])
-        continue; // already case-insensitive
-      else if (nstate->transitions[upper] == NULL)
-        nstate->transitions[upper] = nstate->transitions[lower];
-      else if (nstate->transitions[lower] == NULL)
-        nstate->transitions[lower] = nstate->transitions[upper];
-      else
-        // both the `upper` and the `lower` transitions exist and point to
-        // different sets of states. because of the way we `parse_symset`s,
-        // this should never happen. abort if it does
-        abort();
+      if (bitset_get(nstate->label, chr)) {
+        bitset_set(nstate->label, tolower(chr));
+        bitset_set(nstate->label, toupper(chr));
+      }
     }
   }
 }
