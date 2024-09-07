@@ -137,20 +137,6 @@ int main(void) {
   imatch("abCdEF", "aBCdEf");
   inomatch("ab", "abc");
 
-  // realistic regexes
-  char *re = "\"(^[\\\\\"]|\\\\<>)*\"";
-  nomatch(re, "foo");
-  nomatch(re, "\"foo");
-  nomatch(re, "foo \"bar\"");
-  nomatch(re, "\"foo\\\"");
-  nomatch(re, "\"\\\"");
-  nomatch(re, "\"\"\"");
-  match(re, "\"\"");
-  match(re, "\"foo\"");
-  match(re, "\"foo\\\"\"");
-  match(re, "\"foo\\\\\"");
-  match(re, "\"foo\\nbar\"");
-
   // parse errors
   error("abc]", "");
   error("[abc", "");
@@ -253,4 +239,68 @@ int main(void) {
   error("a{1 2}", "");
   error("a{1, 2}", "");
   error("a{a}", "");
+
+  // realistic regexes
+#define STR_LIT "\"(^[\\\\\"]|\\\\<>)*\""
+  nomatch(STR_LIT, "foo");
+  nomatch(STR_LIT, "\"foo");
+  nomatch(STR_LIT, "foo \"bar\"");
+  nomatch(STR_LIT, "\"foo\\\"");
+  nomatch(STR_LIT, "\"\\\"");
+  nomatch(STR_LIT, "\"\"\"");
+  match(STR_LIT, "\"\"");
+  match(STR_LIT, "\"foo\"");
+  match(STR_LIT, "\"foo\\\"\"");
+  match(STR_LIT, "\"foo\\\\\"");
+  match(STR_LIT, "\"foo\\nbar\"");
+  // ISO/IEC 9899:TC3 $7.19.6.1 'The fprintf function'
+#define FIELD_WIDTH "(\\*|1-90-9*)?"
+#define PRECISION "(\\.|\\.\\*|\\.1-90-9*)?"
+#define DIU "[\\-\\+ 0]*" FIELD_WIDTH PRECISION "([hljzt]|hh|ll)?[diu]"
+#define OX "[\\-\\+ #0]*" FIELD_WIDTH PRECISION "([hljzt]|hh|ll)?[oxX]"
+#define FEGA "[\\-\\+ #0]*" FIELD_WIDTH PRECISION "[lL]?[fFeEgGaA]"
+#define C "[\\-\\+ ]*" FIELD_WIDTH "l?c"
+#define S "[\\-\\+ ]*" FIELD_WIDTH PRECISION "l?s"
+#define P "[\\-\\+ ]*" FIELD_WIDTH "p"
+#define N "[\\-\\+ ]*" FIELD_WIDTH "([hljzt]|hh|ll)?n"
+#define CONV_SPEC "%(" DIU "|" OX "|" FEGA "|" C "|" S "|" P "|" N "|%)"
+#define FORMAT "(^%|" CONV_SPEC ")*"
+  nomatch(CONV_SPEC, "%");
+  nomatch(CONV_SPEC, "%*");
+  match(CONV_SPEC, "%%");
+  nomatch(FORMAT, "%");
+  nomatch(FORMAT, "%*");
+  match(FORMAT, "%%");
+  nomatch(CONV_SPEC, "%5%");
+  nomatch(FORMAT, "%5%");
+  match(CONV_SPEC, "%p");
+  match(CONV_SPEC, "%*p");
+  match(CONV_SPEC, "% *p");
+  match(CONV_SPEC, "%5p");
+  nomatch(CONV_SPEC, "d");
+  match(CONV_SPEC, "%d");
+  match(CONV_SPEC, "%.16s");
+  match(CONV_SPEC, "% 5.3f");
+  nomatch(CONV_SPEC, "%*32.4g");
+  match(CONV_SPEC, "%-#65.4g");
+  nomatch(CONV_SPEC, "%03c");
+  match(CONV_SPEC, "%06i");
+  match(CONV_SPEC, "%lu");
+  match(CONV_SPEC, "%hhu");
+  nomatch(CONV_SPEC, "%Lu");
+  match(CONV_SPEC, "%-*p");
+  nomatch(CONV_SPEC, "%-.*p");
+  nomatch(CONV_SPEC, "%id");
+  nomatch(CONV_SPEC, "%%d");
+  nomatch(CONV_SPEC, "i%d");
+  nomatch(CONV_SPEC, "%c%s");
+  match(FORMAT, "%id");
+  match(FORMAT, "%%d");
+  match(FORMAT, "i%d");
+  match(FORMAT, "%c%s");
+  match(CONV_SPEC, "%0-++ #0x");
+  match(CONV_SPEC, "%30c");
+  nomatch(CONV_SPEC, "%03c");
+  match(FORMAT, "%u + %d");
+  match(FORMAT, "%d:");
 }
