@@ -1,12 +1,13 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-// `nstate`s support epsilon transitions and therefore we can assume NFAs have a
-// unique final state without loss of generality
+// `nstate`s support epsilon transitions and therefore we can assume NFAs have
+// a unique final state without loss of generality. `initial` and `final` also
+// serve as the head and tail, respectively, of the `nstate.next` linked list,
+// which serves as an iterator over all states of the NFA
 struct nfa {
-  struct nstate *initial; // shall be included in `states`
-  struct nstate *final;   // shall be included in `states`
-  struct nstate *states;  // linked list of all NFA states
+  struct nstate *initial;
+  struct nstate *final;
 };
 
 struct nfa ltre_parse(char **regex, char **error);

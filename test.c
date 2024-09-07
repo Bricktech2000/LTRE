@@ -76,10 +76,14 @@ int main(void) {
   nomatch("a?", "aa");
   match("(a+)?", "aa");
   match("(ba+)?", "baa");
+  nomatch("(ab+)?", "b");
+  nomatch("(a+b)?", "a");
   nomatch("(a+a+)+", "a");
   nomatch("a+", "");
   match("(a+|)+", "aa");
   match("(a+|)+", "");
+  match("(a|b)?", "a");
+  match("(a|b)?", "b");
   match("x*|", "xx");
   match("x*|", "");
   match("x+|", "xx");
