@@ -29,6 +29,7 @@ struct dstate {
   struct dstate *transitions[256]; // indexed by input characters
   bool accepting;                  // match result
   bool terminating;                // for early termination
+  int id;              // populated and used for various purposes throughout
   struct dstate *next; // linked list to keep track of all states of a DFA
   uint8_t bitset[];    // powerset representation during powerset construction
 };
@@ -100,7 +101,7 @@ void nfa_free(struct nfa nfa) {
 }
 
 static int nfa_get_size(struct nfa nfa) {
-  // also populates `nstate->id` with unique identifiers
+  // also populates `nstate.id` with unique identifiers
   int nfa_size = 0;
   for (struct nstate *nstate = nfa.initial; nstate; nstate = nstate->next)
     nstate->id = nfa_size++;
@@ -184,6 +185,7 @@ static struct dstate *dstate_alloc(int bitset_size) {
   memset(dstate->transitions, 0, sizeof(dstate->transitions));
   dstate->accepting = false;
   dstate->terminating = false;
+  dstate->id = -1;
   dstate->next = NULL;
   memset(dstate->bitset, 0x00, bitset_size);
   return dstate;
@@ -194,17 +196,25 @@ void dfa_free(struct dstate *dstate) {
     next = dstate->next, free(dstate);
 }
 
+static int dfa_get_size(struct dstate *dfa) {
+  // also populates `dstate.id` with unique identifiers
+  int dfa_size = 0;
+  for (struct dstate *dstate = dfa; dstate; dstate = dstate->next)
+    dstate->id = dfa_size++;
+  return dfa_size;
+}
+
 void dfa_dump(struct dstate *dfa) {
+  (void)dfa_get_size(dfa);
+
   printf("graph LR\n");
-  printf("  I( ) --> %d\n", 0);
+  printf("  I( ) --> %d\n", dfa->id);
 
-  int id1 = 0;
-  for (struct dstate *ds1 = dfa; ds1; ds1 = ds1->next, id1++) {
+  for (struct dstate *ds1 = dfa; ds1; ds1 = ds1->next) {
     if (ds1->accepting)
-      printf("  %d --> F( )\n", id1);
+      printf("  %d --> F( )\n", ds1->id);
 
-    int id2 = 0;
-    for (struct dstate *ds2 = dfa; ds2; ds2 = ds2->next, id2++) {
+    for (struct dstate *ds2 = dfa; ds2; ds2 = ds2->next) {
       symset_t transitions = {0};
       for (int chr = 0; chr < 256; chr++)
         if (ds1->transitions[chr] == ds2)
@@ -212,7 +222,7 @@ void dfa_dump(struct dstate *dfa) {
 
       char *fmt = symset_fmt(transitions);
       if (strcmp(fmt, "[]") != 0)
-        printf("  %d --%s--> %d\n", id1, fmt, id2);
+        printf("  %d --%s--> %d\n", ds1->id, fmt, ds2->id);
     }
   }
 }
@@ -645,7 +655,7 @@ static void epsilon_closure(struct nstate *nstate, uint8_t bitset[]) {
 }
 
 struct dstate *ltre_compile(struct nfa nfa) {
-  // full match. powerset construction
+  // full match. powerset construction and minimization
 
   int nfa_size = nfa_get_size(nfa);
 
@@ -691,24 +701,60 @@ struct dstate *ltre_compile(struct nfa nfa) {
     // a DFA state is accepting if and only if it contains the NFA's final state
     // in its `bitset`
     dstate->accepting = bitset_get(dstate->bitset, nfa.final->id);
-    dstate->terminating = true; // default to true for below
   }
 
-  // flag "terminating" states. a terminating state is a state which either
-  // always or never leads to an accepting state. a state is terminating if and
-  // only if all its transitions are terminating and have the same `accepting`
-  // value as that state. to avoid having to deal with cycles, we default to all
-  // states being terminating then iteratively rule out the ones that aren't
+  int dfa_size = dfa_get_size(dfa);
+
+  // flag indistinguishable states. a pair of states is indistinguishable if and
+  // only if both states have the same `accepting` value and their transitions
+  // are equal up to indistinguishability. to avoid having to deal with cycles,
+  // we default to all states being indistinguishable then iteratively rule out
+  // the ones that aren't
+  bool dis[dfa_size][dfa_size]; // distinguishability matrix. symmetric
+  memset(dis, false, sizeof(dis));
   for (bool done = false; (done = !done);)
-    for (struct dstate *dstate = dfa; dstate; dstate = dstate->next)
-      if (dstate->terminating)
+    for (struct dstate *ds1 = dfa; ds1; ds1 = ds1->next)
+      for (struct dstate *ds2 = ds1; ds2; ds2 = ds2->next)
+        if (!dis[ds1->id][ds2->id])
+          for (int chr = 0; chr < 256; chr++)
+            if (ds1->accepting != ds2->accepting ||
+                dis[ds1->transitions[chr]->id][ds2->transitions[chr]->id])
+              dis[ds1->id][ds2->id] = dis[ds2->id][ds1->id] = true,
+              ds1->terminating = ds2->terminating = false, done = false;
+
+  // minimize DFA by merging indistinguishable states
+  for (struct dstate *ds1 = dfa; ds1; ds1 = ds1->next) {
+    for (struct dstate *prev = ds1; prev && prev->next; prev = prev->next) {
+    redo:;
+      struct dstate *ds2 = prev->next;
+      if (dis[ds1->id][ds2->id])
+        continue;
+      // states are indistinguishable. merge them
+      for (struct dstate *dstate = dfa; dstate; dstate = dstate->next)
         for (int chr = 0; chr < 256; chr++)
-          if (dstate->accepting != dstate->transitions[chr]->accepting ||
-              dstate->transitions[chr]->terminating == false)
-            dstate->terminating = false, done = false;
+          if (dstate->transitions[chr] == ds2)
+            dstate->transitions[chr] = ds1;
+      prev->next = ds2->next;
+      free(ds2);
+      if (prev->next)
+        goto redo;
+    }
+
+    // flag "terminating" states. a terminating state is a state which either
+    // always or never leads to an accepting state. since `ds1` is now
+    // distinguishable from all other states, it is terminating if and only if
+    // all its transitions point to itself because, by definition, no other
+    // state accepts the same set of words as it does (either none or all)
+    ds1->terminating = true;
+    for (int chr = 0; chr < 256; chr++)
+      if (ds1->transitions[chr] != ds1)
+        ds1->terminating = false;
+  }
 
   // nfa_dump(nfa);
   // dfa_dump(dfa);
+
+  // printf("%2d -> %2d\n", dfa_size, dfa_get_size(dfa));
 
   return dfa;
 }
