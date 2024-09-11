@@ -1,9 +1,10 @@
 #include "ltre.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
-void test(char *regex, char *input, bool partial, bool ignorecase, bool errors,
-          bool matches) {
+void test(char *regex, char *input, bool partial, bool ignorecase,
+          bool complement, bool quick, bool errors, bool matches) {
   char *error = NULL, *loc = regex;
   struct nfa nfa = ltre_parse(&loc, &error);
 
@@ -19,21 +20,39 @@ void test(char *regex, char *input, bool partial, bool ignorecase, bool errors,
     ltre_partial(&nfa);
   if (ignorecase)
     ltre_ignorecase(&nfa);
+  if (complement)
+    ltre_complement(&nfa);
 
   struct dstate *dfa = ltre_compile(nfa);
+  if (!quick) {
+    // DFA -> re -> NFA -> DFA -> NFA -> DFA
+    char *re = ltre_decompile(dfa);
+    nfa_free(nfa), nfa = ltre_parse(&re, NULL);
+    dfa_free(dfa), dfa = ltre_compile(nfa);
+    nfa_free(nfa), nfa = ltre_uncompile(dfa);
+    dfa_free(dfa), dfa = ltre_compile(nfa);
+    free(re);
+  }
+
   if (ltre_matches(dfa, (uint8_t *)input) != matches)
     fprintf(stderr, "test failed: /%s/ against '%s'\n", regex, input);
 
   nfa_free(nfa), dfa_free(dfa);
 }
 
-#define error(input, regex) test(input, regex, false, false, true, false);
-#define match(input, regex) test(input, regex, false, false, false, true);
-#define nomatch(input, regex) test(input, regex, false, false, false, false);
-#define pmatch(input, regex) test(input, regex, true, false, false, true);
-#define pnomatch(input, regex) test(input, regex, true, false, false, false);
-#define imatch(input, regex) test(input, regex, false, true, false, true);
-#define inomatch(input, regex) test(input, regex, false, true, false, false);
+// clang-format off
+#define    error(input, regex) test(input, regex, 0, 0, 0, 0, 1, 0);
+#define    match(input, regex) test(input, regex, 0, 0, 0, 0, 0, 1);
+#define  nomatch(input, regex) test(input, regex, 0, 0, 0, 0, 0, 0);
+#define   pmatch(input, regex) test(input, regex, 1, 0, 0, 0, 0, 1);
+#define pnomatch(input, regex) test(input, regex, 1, 0, 0, 0, 0, 0);
+#define   imatch(input, regex) test(input, regex, 0, 1, 0, 0, 0, 1);
+#define inomatch(input, regex) test(input, regex, 0, 1, 0, 0, 0, 0);
+#define   cmatch(input, regex) test(input, regex, 0, 0, 1, 0, 0, 1);
+#define cnomatch(input, regex) test(input, regex, 0, 0, 1, 0, 0, 0);
+#define   qmatch(input, regex) test(input, regex, 0, 0, 0, 1, 0, 1);
+#define qnomatch(input, regex) test(input, regex, 0, 0, 0, 1, 0, 0);
+// clang-format on
 
 int main(void) {
   // catastrophic backtracking
@@ -41,8 +60,8 @@ int main(void) {
   nomatch("(x+x+)+y", "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
 
   // exponential blowout
-  match("[01]*1[01]{8}", "11011100011100");
-  nomatch("[01]*1[01]{8}", "01010010010010");
+  qmatch("[01]*1[01]{8}", "11011100011100");
+  qnomatch("[01]*1[01]{8}", "01010010010010");
 
   // potential edge cases
   match("abba", "abba");
@@ -126,7 +145,7 @@ int main(void) {
   match("a{0}", "");
   nomatch("a{0}", "a");
 
-  // partial and ignorecase
+  // partial, ignorecase, complement
   pmatch("", "");
   pmatch("", "abc");
   pmatch("b", "abc");
@@ -136,6 +155,17 @@ int main(void) {
   imatch("", "");
   imatch("abCdEF", "aBCdEf");
   inomatch("ab", "abc");
+  cmatch("a", "");
+  cmatch("a", "aa");
+  cnomatch("a", "a");
+  cmatch("ab*", "ac");
+  cnomatch("ab*", "abb");
+
+  // decompilation edge cases
+  match("^aa*", "ba");
+  nomatch("a-zz*", "abc");
+  match("\\x0a(0a)*", "\x0a");
+  nomatch("\\x0aa*", "\x0a\x0a");
 
   // parse errors
   error("abc]", "");
@@ -265,42 +295,42 @@ int main(void) {
 #define N "[\\-\\+ ]*" FIELD_WIDTH "([hljzt]|hh|ll)?n"
 #define CONV_SPEC "%(" DIU "|" OX "|" FEGA "|" C "|" S "|" P "|" N "|%)"
 #define FORMAT "(^%|" CONV_SPEC ")*"
-  nomatch(CONV_SPEC, "%");
-  nomatch(CONV_SPEC, "%*");
-  match(CONV_SPEC, "%%");
-  nomatch(FORMAT, "%");
-  nomatch(FORMAT, "%*");
-  match(FORMAT, "%%");
-  nomatch(CONV_SPEC, "%5%");
-  nomatch(FORMAT, "%5%");
-  match(CONV_SPEC, "%p");
-  match(CONV_SPEC, "%*p");
-  match(CONV_SPEC, "% *p");
-  match(CONV_SPEC, "%5p");
-  nomatch(CONV_SPEC, "d");
-  match(CONV_SPEC, "%d");
-  match(CONV_SPEC, "%.16s");
-  match(CONV_SPEC, "% 5.3f");
-  nomatch(CONV_SPEC, "%*32.4g");
-  match(CONV_SPEC, "%-#65.4g");
-  nomatch(CONV_SPEC, "%03c");
-  match(CONV_SPEC, "%06i");
-  match(CONV_SPEC, "%lu");
-  match(CONV_SPEC, "%hhu");
-  nomatch(CONV_SPEC, "%Lu");
-  match(CONV_SPEC, "%-*p");
-  nomatch(CONV_SPEC, "%-.*p");
-  nomatch(CONV_SPEC, "%id");
-  nomatch(CONV_SPEC, "%%d");
-  nomatch(CONV_SPEC, "i%d");
-  nomatch(CONV_SPEC, "%c%s");
-  match(FORMAT, "%id");
-  match(FORMAT, "%%d");
-  match(FORMAT, "i%d");
-  match(FORMAT, "%c%s");
-  match(CONV_SPEC, "%0-++ #0x");
-  match(CONV_SPEC, "%30c");
-  nomatch(CONV_SPEC, "%03c");
-  match(FORMAT, "%u + %d");
-  match(FORMAT, "%d:");
+  qnomatch(CONV_SPEC, "%");
+  qnomatch(CONV_SPEC, "%*");
+  qmatch(CONV_SPEC, "%%");
+  qnomatch(FORMAT, "%");
+  qnomatch(FORMAT, "%*");
+  qmatch(FORMAT, "%%");
+  qnomatch(CONV_SPEC, "%5%");
+  qnomatch(FORMAT, "%5%");
+  qmatch(CONV_SPEC, "%p");
+  qmatch(CONV_SPEC, "%*p");
+  qmatch(CONV_SPEC, "% *p");
+  qmatch(CONV_SPEC, "%5p");
+  qnomatch(CONV_SPEC, "d");
+  qmatch(CONV_SPEC, "%d");
+  qmatch(CONV_SPEC, "%.16s");
+  qmatch(CONV_SPEC, "% 5.3f");
+  qnomatch(CONV_SPEC, "%*32.4g");
+  qmatch(CONV_SPEC, "%-#65.4g");
+  qnomatch(CONV_SPEC, "%03c");
+  qmatch(CONV_SPEC, "%06i");
+  qmatch(CONV_SPEC, "%lu");
+  qmatch(CONV_SPEC, "%hhu");
+  qnomatch(CONV_SPEC, "%Lu");
+  qmatch(CONV_SPEC, "%-*p");
+  qnomatch(CONV_SPEC, "%-.*p");
+  qnomatch(CONV_SPEC, "%id");
+  qnomatch(CONV_SPEC, "%%d");
+  qnomatch(CONV_SPEC, "i%d");
+  qnomatch(CONV_SPEC, "%c%s");
+  qmatch(FORMAT, "%id");
+  qmatch(FORMAT, "%%d");
+  qmatch(FORMAT, "i%d");
+  qmatch(FORMAT, "%c%s");
+  qmatch(CONV_SPEC, "%0-++ #0x");
+  qmatch(CONV_SPEC, "%30c");
+  qnomatch(CONV_SPEC, "%03c");
+  qmatch(FORMAT, "%u + %d");
+  qmatch(FORMAT, "%d:");
 }

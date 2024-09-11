@@ -8,12 +8,16 @@
 struct nfa {
   struct nstate *initial;
   struct nstate *final;
+  bool complemented; // TODO document
 };
 
 struct nfa ltre_parse(char **regex, char **error);
 void ltre_partial(struct nfa *nfa);
 void ltre_ignorecase(struct nfa *nfa);
+void ltre_complement(struct nfa *nfa);
 struct dstate *ltre_compile(struct nfa nfa);
+struct nfa ltre_uncompile(struct dstate *dfa);
+char *ltre_decompile(struct dstate *dfa);
 bool ltre_matches(struct dstate *dfa, uint8_t *input);
 void nfa_free(struct nfa nfa);
 void dfa_free(struct dstate *dfa);

@@ -1,6 +1,4 @@
-#define _GNU_SOURCE // getline
 #include "ltre.h"
-#include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -96,6 +94,8 @@ int main(int argc, char **argv) {
     ltre_partial(&nfa);
   if (opts.ignore)
     ltre_ignorecase(&nfa);
+  if (opts.invert)
+    ltre_complement(&nfa);
   struct dstate *dfa = ltre_compile(nfa);
 
   int lineno = 0;
@@ -121,7 +121,7 @@ int main(int argc, char **argv) {
         continue;
     write:
       lineno++;
-      if (dstate->accepting ^ opts.invert) {
+      if (dstate->accepting) {
         count++;
         if (opts.count)
           goto contin;
@@ -140,22 +140,29 @@ int main(int argc, char **argv) {
       perror("close"), exit(EXIT_FAILURE);
   } else {
     // read from stdin
-    uint8_t *line = NULL;
-    size_t len = 0;
-    ssize_t nread;
-    while ((nread = getline((char **)&line, &len, stdin)) != -1) {
+    size_t len = 0, cap = 256;
+    uint8_t *nl, *line = malloc(cap);
+    while (fgets((char *)line + len, cap - len, stdin) != NULL) {
+      if ((nl = memchr(line + len, '\n', cap - len)) == NULL) {
+        len = cap - 1, line = realloc(line, cap *= 2);
+        continue;
+      }
+      *nl = '\0', len = 0;
+
       lineno++;
-      if (ltre_matches(dfa, line) ^ opts.invert) {
+      if (ltre_matches(dfa, line)) {
         count++;
         if (opts.count)
           continue;
         if (opts.lineno)
           printf("%d:", lineno);
-        fwrite(line, sizeof(uint8_t), nread, stdout);
+        *nl = '\n';
+        fwrite(line, sizeof(uint8_t), nl - line + 1, stdout);
       }
     }
-    if (errno)
-      perror("getline"), exit(EXIT_FAILURE);
+
+    if (!feof(stdin))
+      perror("fgets"), exit(EXIT_FAILURE);
     free(line);
   }
 

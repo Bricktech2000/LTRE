@@ -1,6 +1,7 @@
 #include "ltre.h"
-#include <assert.h>
 #include <ctype.h>
+#include <limits.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -43,16 +44,21 @@ static void bitset_set(uint8_t bitset[], int id) {
 }
 
 static char *symset_fmt(symset_t symset) {
-  // pretty-format for debugging
+  // output shall be parsable by `parse_symset` and satisfy the invariant
+  // `parse_symset . symset_fmt == id`. in the general case, will not satisfy
+  // `symset_fmt . parse_symset == id`
 
   static char buf[1024], nbuf[1024];
   char *bufp = buf, *nbufp = nbuf;
+  // number of symsets in `buf` and `nbuf` character classes, respectively
+  int nsym = 0, nnsym = 0;
 
   *nbufp++ = '^';
   *bufp++ = *nbufp++ = '[';
 
   for (int chr = 0; chr < 256; chr++) {
-  append_chr:;
+  append_chr:
+    bitset_get(symset, chr) ? nsym++ : nnsym++;
     char **p = bitset_get(symset, chr) ? &bufp : &nbufp;
     bool is_metachar = chr && strchr(METACHARS, chr);
     if (!isprint(chr) && !is_metachar)
@@ -60,11 +66,7 @@ static char *symset_fmt(symset_t symset) {
     else {
       if (is_metachar)
         *(*p)++ = '\\';
-      // avoid breaking Mermaid
-      if (strchr("\"#&{}()xo=-", chr))
-        *p += sprintf(*p, "#%hhu;", chr);
-      else
-        *(*p)++ = chr;
+      *(*p)++ = chr;
     }
 
     // make character ranges
@@ -72,7 +74,7 @@ static char *symset_fmt(symset_t symset) {
     while (chr < 255 && bitset_get(symset, chr) == bitset_get(symset, chr + 1))
       chr++;
     if (chr - start >= 2)
-      *(*p)++ = '-';
+      *(*p)++ = '-', bitset_get(symset, chr) ? nsym-- : nnsym--;
     if (chr - start >= 1)
       goto append_chr;
   }
@@ -80,7 +82,18 @@ static char *symset_fmt(symset_t symset) {
   *bufp++ = *nbufp++ = ']';
   *bufp++ = *nbufp++ = '\0';
 
-  // return a negated character class if it is shorter
+  // special casees for character classes containing zero or one symsets
+  if (nnsym == 0) {
+    return "<>";
+  } else if (nsym == 1) {
+    bufp[-2] = '\0';
+    return buf + 1;
+  } else if (nnsym == 1) {
+    nbufp[-2] = '\0', nbuf[1] = '^';
+    return nbuf + 1;
+  }
+
+  // return a complemented character class if it is shorter
   return (bufp - buf < nbufp - nbuf) ? buf : nbuf;
 }
 
@@ -132,6 +145,7 @@ static struct nfa nfa_clone(struct nfa nfa) {
   return (struct nfa){
       .initial = nstates[nfa.initial->id],
       .final = nstates[nfa.final->id],
+      .complemented = nfa.complemented,
   };
 }
 
@@ -161,6 +175,18 @@ static void nfa_pad_final(struct nfa *nfa) {
   nfa->final = final;
 }
 
+static void nfa_uncomplement(struct nfa *nfa) {
+  // ensures `!nfa->complemented`, a useful property when manipulating NFAs.
+  // if `nfa->complemented`, we have to go through the whole compile pipeline
+  // to uncomplement it
+  if (!nfa->complemented)
+    return;
+  struct dstate *dfa = ltre_compile(*nfa);
+  struct nfa uncomplemented = ltre_uncompile(dfa);
+  dfa_free(dfa), nfa_free(*nfa);
+  memcpy(nfa, &uncomplemented, sizeof(struct nfa));
+}
+
 void nfa_dump(struct nfa nfa) {
   (void)nfa_get_size(nfa);
 
@@ -174,9 +200,18 @@ void nfa_dump(struct nfa nfa) {
     if (nstate->epsilon1)
       printf("  %d --> %d\n", nstate->id, nstate->epsilon1->id);
 
-    char *fmt = symset_fmt(nstate->label);
-    if (strcmp(fmt, "[]") != 0)
-      printf("  %d --%s--> %d\n", nstate->id, fmt, nstate->target->id);
+    bool empty = true;
+    for (int i = 0; i < sizeof(symset_t); i++)
+      empty = empty && !nstate->label[i];
+
+    if (empty)
+      continue;
+
+    // avoid breaking Mermaid
+    printf("  %d --", nstate->id);
+    for (char *fmt = symset_fmt(nstate->label); *fmt; fmt++)
+      printf(strchr("\\\"#&{}()xo=- ", *fmt) ? "#%hhu;" : "%c", *fmt);
+    printf("--> %d\n", nstate->target->id);
   }
 }
 
@@ -215,14 +250,20 @@ void dfa_dump(struct dstate *dfa) {
       printf("  %d --> F( )\n", ds1->id);
 
     for (struct dstate *ds2 = dfa; ds2; ds2 = ds2->next) {
+      bool empty = true;
       symset_t transitions = {0};
       for (int chr = 0; chr < 256; chr++)
         if (ds1->transitions[chr] == ds2)
-          bitset_set(transitions, chr);
+          bitset_set(transitions, chr), empty = false;
 
-      char *fmt = symset_fmt(transitions);
-      if (strcmp(fmt, "[]") != 0)
-        printf("  %d --%s--> %d\n", ds1->id, fmt, ds2->id);
+      if (empty)
+        continue;
+
+      // avoid breaking Mermaid
+      printf("  %d --", ds1->id);
+      for (char *fmt = symset_fmt(transitions); *fmt; fmt++)
+        printf(strchr("\\\"#&{}()xo=- ", *fmt) ? "#%hhu;" : "%c", *fmt);
+      printf("--> %d\n", ds2->id);
     }
   }
 }
@@ -364,23 +405,19 @@ static void parse_shorthand(symset_t symset, char **regex, char **error) {
 }
 
 static void parse_symset(symset_t symset, char **regex, char **error) {
-  bool invert = false;
+  bool complement = false;
   if (**regex == '^')
-    ++*regex, invert = true;
+    ++*regex, complement = true;
 
   char *last_regex = *regex;
   parse_shorthand(symset, regex, error);
   if (!*error)
-    goto process_invert;
+    goto process_complement;
   *error = NULL;
   *regex = last_regex;
 
   if (**regex == '[') {
     ++*regex;
-
-    // backwards compatibility, if necessary
-    // if (**regex == '^')
-    //   ++*regex, invert ^= true;
 
     memset(symset, 0x00, sizeof(symset_t));
     // hacky lookahead for better diagnostics
@@ -400,7 +437,7 @@ static void parse_symset(symset_t symset, char **regex, char **error) {
     }
 
     ++*regex;
-    goto process_invert;
+    goto process_complement;
   }
   *regex = last_regex;
 
@@ -425,7 +462,7 @@ static void parse_symset(symset_t symset, char **regex, char **error) {
     }
 
     ++*regex;
-    goto process_invert;
+    goto process_complement;
   }
   *regex = last_regex;
 
@@ -445,12 +482,12 @@ static void parse_symset(symset_t symset, char **regex, char **error) {
     do
       bitset_set(symset, chr);
     while (++chr != end);
-    goto process_invert;
+    goto process_complement;
   }
   return;
 
-process_invert:
-  if (invert)
+process_complement:
+  if (complement)
     for (int i = 0; i < sizeof(symset_t); i++)
       symset[i] = ~symset[i];
   return;
@@ -474,7 +511,9 @@ static struct nfa parse_atom(char **regex, char **error) {
     return sub;
   }
 
-  struct nfa chars = {.initial = nstate_alloc(), .final = nstate_alloc()};
+  struct nfa chars = {.initial = nstate_alloc(),
+                      .final = nstate_alloc(),
+                      .complemented = false};
   chars.initial->next = chars.final;
   chars.initial->target = chars.final;
 
@@ -551,7 +590,7 @@ static struct nfa parse_term(char **regex, char **error) {
       return (struct nfa){NULL};
     }
 
-    struct nfa atoms;
+    struct nfa atoms = {.complemented = false};
     atoms.initial = atoms.final = nstate_alloc();
 
     // if `max` is bounded, make `max` copies and add `?` epsilon transitions:
@@ -584,7 +623,7 @@ static struct nfa parse_term(char **regex, char **error) {
 }
 
 static struct nfa parse_regex(char **regex, char **error) {
-  struct nfa terms;
+  struct nfa terms = {.complemented = false};
   terms.initial = terms.final = nstate_alloc();
 
   // hacky lookahead for better diagnostics
@@ -701,6 +740,8 @@ struct dstate *ltre_compile(struct nfa nfa) {
     // a DFA state is accepting if and only if it contains the NFA's final state
     // in its `bitset`
     dstate->accepting = bitset_get(dstate->bitset, nfa.final->id);
+    // swap accepting and non-accepting states if the NFA is complemented
+    dstate->accepting = dstate->accepting != nfa.complemented;
   }
 
   int dfa_size = dfa_get_size(dfa);
@@ -759,8 +800,367 @@ struct dstate *ltre_compile(struct nfa nfa) {
   return dfa;
 }
 
+// XXX this maintains the invariant that the final state refers to nothing, but
+// does not maintain the invariant that nothing refers to the initial state,
+// which `nfa_concat` requires
+struct nfa ltre_uncompile(struct dstate *dfa) {
+  int dfa_size = dfa_get_size(dfa);
+
+  struct nfa nfa = {.complemented = false};
+  nfa.initial = nfa.final = nstate_alloc();
+  struct nstate **tail = &nfa.initial; // used to allocate new NFA states
+
+  struct nstate *nstates[dfa_size]; // mapping from DFA state to NFA state
+  for (int id = 0; id < dfa_size; id++)
+    *tail = nstate_alloc(), nstates[id] = *tail, tail = &(*tail)->next;
+
+  // use `epsilon1` transitions to `nfa.final` to model accepting states
+  for (struct dstate *dstate = dfa; dstate; dstate = dstate->next)
+    if (dstate->accepting)
+      nstates[dstate->id]->epsilon1 = nfa.final;
+
+  // the labeled transitions of a `dstate` may target multiple different states,
+  // but that of an `nstate` may only target one, namely `nstate.target`. to
+  // bridge the gap, DFA states are mapped not to a single NFA state, but to the
+  // root of a binary tree of NFA states formed by `epsilon0` and `epsilon1`.
+  for (struct dstate *ds1 = dfa; ds1; ds1 = ds1->next) {
+    struct nstate *free = NULL;
+
+    for (struct dstate *ds2 = dfa; ds2; ds2 = ds2->next) {
+      bool empty = true;
+      symset_t transitions = {0};
+      for (int chr = 0; chr < 256; chr++)
+        if (ds1->transitions[chr] == ds2)
+          bitset_set(transitions, chr), empty = false;
+
+      if (empty)
+        continue;
+
+      struct nstate *src; // the "source" state for this labeled transition
+
+      // root->O-->O-->O-->O->free-->
+      //   |   |   |   |   |   |
+      //   O   O   O   O   O   O
+      if (free == NULL)
+        // first iteration. make sure the root of the tree comes from `nstates`
+        free = nstates[ds1->id], src = free;
+      else {
+        *tail = nstate_alloc(), src = *tail;
+
+        // maintain that `free` is an `nstate` with at least one unused epsilon
+        // transition. if `epsilon1` is unused then use it to point to our
+        // source state, but stay where we are because `epsilon0` is still
+        // unused. otherwise, `epsilon0` is the only unused epsilon transition,
+        // so use it to point to our source state and move over because the
+        // current state has become saturated. the resulting binary tree is
+        // unbalanced, but generating it is easy and it is still twice as
+        // efficient as a linked list would be
+        if (!free->epsilon1)
+          free->epsilon1 = *tail;
+        else
+          free->epsilon0 = *tail, free = *tail;
+        tail = &(*tail)->next;
+      }
+
+      src->target = nstates[ds2->id];
+      memcpy(src->label, transitions, sizeof(symset_t));
+    }
+  }
+
+  *tail = nfa.final;
+
+  return nfa;
+}
+
+char *ltre_decompile(struct dstate *dfa) {
+  // we codegen the DFA straight into a regular expression string. start by
+  // turning the DFA into a matrix of `arrow`s on the stack, each of which
+  // holds a regular expression string as label and a precedence value for
+  // parenthesizing
+  enum prec {
+    ALT,    // outermost is an alternation
+    CONCAT, // outermost is a concatenation
+    QUANT,  // outermost is a quantifier
+    SYMSET, // outermost is a symset
+  };
+  struct arrow {
+    // we use a `NULL` label as a shorthand for empty /[]/ transitions an an
+    // empty string as a shorthand for epsilon /()/ transitions. this way we can
+    // test for /[]/ with `if (!label)` and test for /()/ with `if (!*label)`
+    char *label;
+    enum prec prec;
+  };
+
+  int dfa_size = dfa_get_size(dfa);
+  // also create an auxiliary state and store it at index `dfa_size`
+  struct arrow arrows[dfa_size + 1][dfa_size + 1];
+  for (int id = 0; id <= dfa_size; id++)
+    arrows[dfa_size][id].label = arrows[id][dfa_size].label = NULL;
+
+  // create an epsilon /()/ transition from the auxiliary state to the DFA's
+  // initial state
+  arrows[dfa_size][dfa->id].label = malloc(1);
+  *arrows[dfa_size][dfa->id].label = '\0';
+  arrows[dfa_size][dfa->id].prec = SYMSET;
+  for (struct dstate *ds1 = dfa; ds1; ds1 = ds1->next) {
+    // create epsilon /()/ transitions from the DFA's accepting states to the
+    // auxiliary state
+    if (ds1->accepting) {
+      arrows[ds1->id][dfa_size].label = malloc(1);
+      *arrows[ds1->id][dfa_size].label = '\0';
+      arrows[ds1->id][dfa_size].prec = SYMSET;
+    }
+
+    for (struct dstate *ds2 = dfa; ds2; ds2 = ds2->next) {
+      bool empty = true;
+      symset_t transitions = {0};
+      for (int chr = 0; chr < 256; chr++)
+        if (ds1->transitions[chr] == ds2)
+          bitset_set(transitions, chr), empty = false;
+
+      arrows[ds1->id][ds2->id].label = NULL;
+
+      if (empty)
+        continue;
+
+      char *fmt = symset_fmt(transitions);
+      arrows[ds1->id][ds2->id].label = malloc(strlen(fmt) + 1);
+      strcpy(arrows[ds1->id][ds2->id].label, fmt);
+      arrows[ds1->id][ds2->id].prec = SYMSET;
+    }
+  }
+
+  // iteratively select one state according to some metric and reroute all its
+  // inbound and outbound transitions so as to bypass that state, while also
+  // taking care of self-loops. don't ever select the auxiliary state, so that
+  // when we're done the final regular expression ends up as a self-loop on the
+  // auxiliary state. choosing the state with minimal vertex degree seems to
+  // work okay, sa that's the metric we're using
+  while (1) {
+    int best_fit;
+    int min_degree = INT_MAX;
+    for (int id1 = 0; id1 < dfa_size; id1++) {
+      int degree = 0;
+      // double-counts self-loops, which penalizes them, which is probably good
+      for (int id2 = 0; id2 < dfa_size; id2++)
+        degree +=
+            (arrows[id1][id2].label != NULL) + (arrows[id2][id1].label != NULL);
+      if (degree == 0)
+        continue; // state has already been processed
+      if (degree < min_degree)
+        min_degree = degree, best_fit = id1;
+    }
+
+    if (min_degree == INT_MAX)
+      break; // all states have been processed
+
+    // iterate through all pairs of inbound and outbound transitions, including
+    // those to and from the auxiliary state
+    for (int id1 = 0; id1 <= dfa_size; id1++) {
+      if (id1 == best_fit)
+        continue; // inbound transition must not come from the best-fit state
+      for (int id2 = 0; id2 <= dfa_size; id2++) {
+        if (id2 == best_fit)
+          continue; // outbound transition must not lead to the best-fit state
+        struct arrow in = arrows[id1][best_fit];  // current inbound transition
+        struct arrow out = arrows[best_fit][id2]; // current outbout transition
+        struct arrow self = arrows[best_fit][best_fit]; // self-transition
+        struct arrow existing = arrows[id1][id2]; // existing bypass transition
+
+        // (existing)|[](self)(out) == (existing)|(in)(self)[] == (existing)
+        if (!in.label || !out.label)
+          continue;
+
+        // get rid of the self-transition by concatenating it either onto the
+        // the inbound or outbound transition
+        struct arrow first, second;
+
+        ptrdiff_t diff;
+        if (!self.label || !*self.label) {
+          // (in)[]*(out) == (in)()*(out) == (in)(out)
+          first = in, second = out;
+        } else if (in.prec >= CONCAT && self.prec >= CONCAT &&
+                   (diff = strlen(in.label) - strlen(self.label)) >= 0 &&
+                   strcmp(in.label + diff, self.label) == 0) {
+          // hackily try to avoid breaking apart symsets in the inbound arrow
+          if (diff >= 1 && strchr("^-\\", in.label[diff - 1]) &&
+              (diff == 1 || in.label[diff - 2] != '\\'))
+            goto nevermind; // preserve ^aa* a-zz* \^a^a* but not \^aa* \-aa*
+          if (diff >= 2 && strncmp(&in.label[diff - 2], "\\x", 2) == 0 &&
+              (diff == 2 || in.label[diff - 3] != '\\'))
+            goto nevermind; // preserve \x0a(0a)* but not \\x0a(0a*)
+          if (diff >= 3 && strncmp(&in.label[diff - 3], "\\x", 2) == 0 &&
+              (diff == 3 || in.label[diff - 4] != '\\'))
+            goto nevermind; // preserve \x0aa* but not \\x0aa*
+
+          // (in_pre)(self)+(out) where (in) == (in_pre)(self)
+          first.label = malloc(strlen(in.label) + 5 + 1);
+          char *p = first.label;
+          if (diff != 0 && in.prec < CONCAT)
+            *p++ = '(';
+          memcpy(p, in.label, diff), p += diff;
+          if (diff != 0 && in.prec < CONCAT)
+            *p++ = ')';
+          if (self.prec <= QUANT)
+            *p++ = '(';
+          strcpy(p, self.label), p += strlen(self.label);
+          if (self.prec <= QUANT)
+            *p++ = ')';
+          *p++ = '+';
+          *p++ = '\0';
+          first.prec = CONCAT;
+          second = out;
+        } else
+        nevermind:
+          if (out.prec >= CONCAT && self.prec >= CONCAT &&
+              (diff = strlen(out.label) - strlen(self.label)) >= 0 &&
+              strncmp(out.label, self.label, strlen(self.label)) == 0) {
+            // it may appear that `a*a-z` would be incorrectly broken apart and
+            // converted to `a+-z`, but this will never happen because we're
+            // decompiling a DFA and therefore if there is a self-loop on `a`,
+            // there can be no outbound transitions on `a`
+
+            // (in)(self)+(out_post) where (out) == (self)(out_post)
+            second.label = malloc(strlen(out.label) + 5 + 1);
+            char *p = second.label;
+            if (self.prec <= QUANT)
+              *p++ = '(';
+            strcpy(p, self.label), p += strlen(self.label);
+            if (self.prec <= QUANT)
+              *p++ = ')';
+            *p++ = '+';
+            if (diff != 0 && out.prec < CONCAT)
+              *p++ = '(';
+            memcpy(p, out.label + diff, diff), p += diff;
+            if (diff != 0 && out.prec < CONCAT)
+              *p++ = ')';
+            *p++ = '\0';
+            second.prec = CONCAT;
+            first = in;
+          } else {
+            // (in)(self)*(out)
+            second.label =
+                malloc(strlen(self.label) + strlen(out.label) + 5 + 1);
+            char *p = second.label;
+            if (self.prec <= QUANT)
+              *p++ = '(';
+            strcpy(p, self.label), p += strlen(self.label);
+            if (self.prec <= QUANT)
+              *p++ = ')';
+            *p++ = '*';
+            if (out.prec < CONCAT)
+              *p++ = '(';
+            strcpy(p, out.label), p += strlen(out.label);
+            if (out.prec < CONCAT)
+              *p++ = ')';
+            *p++ = '\0';
+            second.prec = CONCAT;
+            first = in;
+          }
+
+        // concatenate the inbound and outbound transitions to create a
+        // transition that bypasses the best-fit state
+        struct arrow bypass;
+
+        if (!*first.label) {
+          // ()(second) == (second)
+          bypass = second;
+        } else if (!*second.label) {
+          // (first)() == (first)
+          bypass = first;
+        } else {
+          // (first)(second)
+          bypass.label =
+              malloc(strlen(first.label) + strlen(second.label) + 4 + 1);
+          char *p = bypass.label;
+          if (first.prec < CONCAT)
+            *p++ = '(';
+          strcpy(p, first.label), p += strlen(first.label);
+          if (first.prec < CONCAT)
+            *p++ = ')';
+          if (second.prec < CONCAT)
+            *p++ = '(';
+          strcpy(p, second.label), p += strlen(second.label);
+          if (second.prec < CONCAT)
+            *p++ = ')';
+          *p++ = '\0';
+          bypass.prec = CONCAT;
+        }
+
+        // if there already exists a transition between the states we're
+        // targetting, merge it with our bypass transition using an alternation
+        struct arrow merged;
+
+        if (!bypass.label) {
+          // (existing)|[] == (existing)
+          merged = existing;
+        } else if (!existing.label) {
+          // []|(bypass) == (bypass)
+          if (bypass.label == first.label || bypass.label == second.label) {
+            merged.label = malloc(strlen(bypass.label) + 1);
+            strcpy(merged.label, bypass.label);
+            merged.prec = bypass.prec;
+          } else
+            merged = bypass;
+        } else if (!*existing.label) {
+          // ()|(bypass) == (bypass)?
+          merged.label = malloc(strlen(bypass.label) + 3 + 1);
+          char *p = merged.label;
+          if (bypass.prec <= QUANT)
+            *p++ = '(';
+          strcpy(p, bypass.label), p += strlen(bypass.label);
+          if (bypass.prec <= QUANT)
+            *p++ = ')';
+          *p++ = '?';
+          *p++ = '\0';
+          merged.prec = QUANT;
+        } else {
+          // (existing)|(bypass)
+          merged.label =
+              malloc(strlen(existing.label) + strlen(bypass.label) + 1 + 1);
+          char *p = merged.label;
+          strcpy(p, existing.label), p += strlen(existing.label);
+          *p++ = '|';
+          strcpy(p, bypass.label), p += strlen(bypass.label);
+          *p++ = '\0';
+          merged.prec = ALT;
+        }
+
+        if (first.label != in.label)
+          free(first.label);
+        if (second.label != out.label)
+          free(second.label);
+        if (bypass.label != first.label && bypass.label != second.label &&
+            bypass.label != merged.label)
+          free(bypass.label);
+        if (existing.label != merged.label)
+          free(existing.label);
+
+        // replace the existing bypass transition with our merged transition
+        arrows[id1][id2] = merged;
+      }
+    }
+
+    // all transitions going through the best-fit state have been rerouted, so
+    // replace them all with empty /[]/ transitions, effectively eliminating
+    // the state by isolating it
+    for (int id = 0; id <= dfa_size; id++) {
+      free(arrows[id][best_fit].label), arrows[id][best_fit].label = NULL;
+      free(arrows[best_fit][id].label), arrows[best_fit][id].label = NULL;
+    }
+  }
+
+  // the final regular expression ends up as a self-loop on the auxiliary state
+  char *regex = arrows[dfa_size][dfa_size].label;
+  if (!regex)
+    regex = malloc(3), strcpy(regex, "[]");
+
+  return regex;
+}
+
 void ltre_partial(struct nfa *nfa) {
   // enable partial matching. effectively, surround the NFA by a pair of `<>*`s
+  nfa_uncomplement(nfa);
   nfa_pad_initial(nfa), nfa_pad_final(nfa);
   nfa->initial->target = nfa->initial;
   nfa->final->target = nfa->final;
@@ -771,6 +1171,7 @@ void ltre_partial(struct nfa *nfa) {
 void ltre_ignorecase(struct nfa *nfa) {
   // enable case-insensitive matching. effectively, for any character a labeled
   // transition contains, make it also contain its swapped-case counterpart
+  nfa_uncomplement(nfa);
   for (struct nstate *nstate = nfa->initial; nstate; nstate = nstate->next) {
     for (int chr = 0; chr <= 256; chr++) {
       if (bitset_get(nstate->label, chr)) {
@@ -779,6 +1180,12 @@ void ltre_ignorecase(struct nfa *nfa) {
       }
     }
   }
+}
+
+void ltre_complement(struct nfa *nfa) {
+  // complement accepted language. `ltre_compile` will read this flag when
+  // marking accepting states
+  nfa->complemented = !nfa->complemented;
 }
 
 bool ltre_matches(struct dstate *dfa, uint8_t *input) {
