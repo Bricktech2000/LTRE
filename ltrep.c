@@ -14,20 +14,20 @@ struct dstate {
 };
 
 struct opts {
-  bool invert; // -v
-  bool full;   // -x
-  bool ignore; // -i
-  bool lineno; // -n
-  bool count;  // -c
-  char *regex; // <regex>
-  char *file;  // [file]
+  bool invert;  // -v
+  bool full;    // -x
+  bool ignore;  // -i
+  bool lineno;  // -n
+  bool count;   // -c
+  char *regex;  // <regex>
+  char **files; // [files...]
 };
 
 #define DESC "LTREP - print lines matching a regex\n"
 #define HELP "Try 'ltrep -h' for more information.\n"
 #define USAGE                                                                  \
   "Usage:\n"                                                                   \
-  "  ltrep [options...] <regex> [file]\n"
+  "  ltrep [options...] <regex> [files...]\n"
 #define OPTS                                                                   \
   "Options:\n"                                                                 \
   "  -v  invert match; print non-matching lines\n"                             \
@@ -74,11 +74,12 @@ struct opts parse_opts(int argc, char **argv) {
     argc--, argv++;
   }
 
-  if (argc < 1 || argc > 2)
+  if (argc < 1)
     goto usage;
 
   opts.regex = argv[0];
-  opts.file = argc == 2 ? argv[1] : NULL;
+  argc--, argv++;
+  opts.files = argv;
   return opts;
 }
 
@@ -101,44 +102,18 @@ int main(int argc, char **argv) {
   int lineno = 0;
   int count = 0;
 
-  if (opts.file) {
-    // memory-map file
-    int fd = open(opts.file, O_RDONLY);
-    if (fd == -1)
-      perror("open"), exit(EXIT_FAILURE);
-    size_t len = lseek(fd, 0, SEEK_END);
-    uint8_t *data = mmap(0, len, PROT_READ, MAP_PRIVATE, fd, 0);
+#define OUTPUT_IF(COND)                                                        \
+  lineno++;                                                                    \
+  if (COND) {                                                                  \
+    count++;                                                                   \
+    if (opts.count)                                                            \
+      continue;                                                                \
+    if (opts.lineno)                                                           \
+      printf("%d:", lineno);                                                   \
+    fwrite(line, sizeof(uint8_t), nl - line + 1, stdout);                      \
+  }
 
-    // intertwine `ltre_matches` within walking the file for maximum performance
-    struct dstate *dstate = dfa;
-    uint8_t *line = data, *curr = data;
-    for (; curr < data + len; curr++) {
-      dstate = dstate->transitions[*curr];
-      if (dstate->terminating) {
-        curr = memchr(curr, '\n', data + len - curr);
-        curr = curr ? curr : data + len;
-      } else if (*curr != '\n')
-        continue;
-    write:
-      lineno++;
-      if (dstate->accepting) {
-        count++;
-        if (opts.count)
-          goto contin;
-        if (opts.lineno)
-          printf("%d:", lineno);
-        fwrite(line, sizeof(uint8_t), curr - line + 1, stdout);
-      }
-    contin:
-      line = curr + 1;
-      dstate = dfa;
-    }
-    if (curr != line)
-      goto write;
-
-    if (close(fd) == -1)
-      perror("close"), exit(EXIT_FAILURE);
-  } else {
+  if (!*opts.files) {
     // read from stdin
     size_t len = 0, cap = 256;
     uint8_t *nl, *line = malloc(cap);
@@ -149,21 +124,42 @@ int main(int argc, char **argv) {
       }
       *nl = '\0', len = 0;
 
-      lineno++;
-      if (ltre_matches(dfa, line)) {
-        count++;
-        if (opts.count)
-          continue;
-        if (opts.lineno)
-          printf("%d:", lineno);
-        *nl = '\n';
-        fwrite(line, sizeof(uint8_t), nl - line + 1, stdout);
-      }
+      OUTPUT_IF(ltre_matches(dfa, line) && (*nl = '\n'));
     }
 
     if (!feof(stdin))
       perror("fgets"), exit(EXIT_FAILURE);
     free(line);
+  }
+
+  for (char **file = opts.files; *file; file++) {
+    // memory-map file
+    int fd = open(*file, O_RDONLY);
+    if (fd == -1)
+      perror("open"), exit(EXIT_FAILURE);
+    size_t len = lseek(fd, 0, SEEK_END);
+    uint8_t *data = mmap(0, len, PROT_READ, MAP_PRIVATE, fd, 0);
+
+    // intertwine `ltre_matches` within walking the file for maximum
+    // performance
+    struct dstate *dstate = dfa;
+    uint8_t *nl = data, *line = data;
+    for (; nl < data + len; line = ++nl) {
+      for (dstate = dfa; !dstate->terminating && *nl != '\n' && nl < data + len;
+           nl++)
+        dstate = dstate->transitions[*nl];
+      if (*nl != '\n') {
+        nl = memchr(nl, '\n', data + len - nl);
+        nl = nl ? nl : data + len;
+      }
+
+      if (opts.files[1] && dstate->accepting)
+        printf("%s:", *file);
+      OUTPUT_IF(dstate->accepting);
+    }
+
+    if (close(fd) == -1)
+      perror("close"), exit(EXIT_FAILURE);
   }
 
   if (opts.count)

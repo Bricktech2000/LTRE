@@ -8,7 +8,11 @@
 struct nfa {
   struct nstate *initial;
   struct nstate *final;
-  bool complemented; // TODO document
+  // NFA complementation is performed lazily by flipping this flag, often saving
+  // us the trip through the compile pipeline. when this NFA is eventually
+  // compiled into a DFA by `ltre_compile`, this flag will be read when marking
+  // accepting states
+  bool complemented;
 };
 
 struct nfa ltre_parse(char **regex, char **error);

@@ -22,7 +22,7 @@ To build and run the minimal search tool:
 ```bash
 make ltrep
 bin/ltrep -h # displays usage
-bin/ltrep '"(^[\\"]|\\<>)*"' ltre.c
+bin/ltrep '"(^[\\"]|\\<>)*"' ltrep.c ltre.c
 ```
 
 To build and run the regex complementation tool:
@@ -43,7 +43,7 @@ See [grammar.bnf](grammar.bnf) for the regular expression grammar specification.
 - Metacharacters within character classes must be escaped to be matched literally.
 - Character classes may be complemented by prefixing the opening bracket with `^`.
 - Literal characters and character ranges may be complemented by prefixing them with `^`.
-- `-<>` are considered metacharacters; they may be matched literally by escaping them.
+- `-<>&~` are considered metacharacters; they may be matched literally by escaping them.
 - `.` does not match newlines; to match any character including newlines, use `<>`.
 - The empty regular expression matches the empty word; to match no word, use `[]`.
 - The lower bound of bounded quantifiers may be omitted and defaults to `0`.
@@ -66,12 +66,14 @@ Supported features are as follows:
 | Bounded Above        | `a{,5}`  | Matches at most 5 `a`s                | `regex -> regex`             |
 | Concatenation        | `ab`     | Matches `a` followed by `b`           | `(regex, regex) -> regex`    |
 | Alternation          | `a\|b`   | Matches either `a` or `b`             | `(regex, regex) -> regex`    |
+| Intersection         | `a&b`    | Matches simultaneously `a` and `b`    | `(regex, regex) -> regex`    |
+| Complement           | `~a`     | Matches anything but `a`              | `regex -> regex`             |
 | Shorthand Class      | `\d`     | Matches a digit character             | `symset`                     |
 | Symset Complement    | `^a`     | Matches any character not in `a`      | `symset -> symset`           |
 | Character Range      | `a-z`    | Matches any character from `a` to `z` | `(symbol, symbol) -> symset` |
 | Character Class      | `[ab]`   | Matches any character in `a` or `b`   | `[symset] -> symset`         |
 | Symset Intersection  | `<ab>`   | Matches any character in `a` and `b`  | `[symset] -> symset`         |
 
-C-style escapes are supported for `abfnrtv`. Metacharacter escapes are supported for `\.-^$*+?{}[]<>()|`. Shorthand classes are supported for `dDsSwW`. Semantically, the dot metacharacter is considered a shorthand class.
+C-style escapes are supported for `abfnrtv`. Metacharacter escapes are supported for `\.-^$*+?{}[]<>()|&~`. Shorthand classes are supported for `dDsSwW`. Semantically, the dot metacharacter is considered a shorthand class.
 
-`symbol`s promote to `symset`s (forming a singleton set) and `symset`s promote to `regex`es (which match any single character from the set). Alternation has the lowest precedence, followed by concatenation, followed by quantifiers, followed by symset complements. At most one quantifier may be applied to a `regex` per grouping level, and at most one symset complement may be applied to a `symset` per character class or symset intersection level.
+`symbol`s promote to `symset`s (forming a singleton set) and `symset`s promote to `regex`es (which match any single character from the set). Alternation and intersection have the lowest precedence, followed by complementation, followed by concatenation, followed by quantification, followed by symset complementation. Alternation and intersection are left-associative. At most one complement and at most one quantifier may be applied to a `regex` per grouping level, and at most one symset complement may be applied to a `symset` per character class or symset intersection level.

@@ -6,7 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define METACHARS "\\.-^$*+?{}[]<>()|"
+#define METACHARS "\\.-^$*+?{}[]<>()|&~"
 typedef uint8_t symset_t[256 / 8];
 
 // an NFA state. we can assume NFA states have at most two outgoing epsilon
@@ -151,7 +151,10 @@ static struct nfa nfa_clone(struct nfa nfa) {
 
 static void nfa_concat(struct nfa *nfap, struct nfa nfa) {
   // memcpys `nfa.initial` into `nfap->final` then frees `nfa.initial`; assumes
-  // nothing refers to `nfa.initial` and assumes `nfap->final` refers to nothing
+  // nothing refers to `nfa.initial` and assumes `nfap->final` refers to
+  // nothing. performs a "visual" concatenation and therefore does not take into
+  // account the `nfa.complemented` flag. if `nfa` or `nfap` have it set, the
+  // result may not be what you expect
   if (nfap->initial == nfap->final)
     nfa_free(*nfap), *nfap = nfa;
   else if (nfa.initial != nfa.final) {
@@ -526,7 +529,7 @@ static struct nfa parse_atom(char **regex, char **error) {
   return chars;
 }
 
-static struct nfa parse_term(char **regex, char **error) {
+static struct nfa parse_factor(char **regex, char **error) {
   struct nfa atom = parse_atom(regex, error);
   if (*error)
     return (struct nfa){NULL};
@@ -536,6 +539,7 @@ static struct nfa parse_term(char **regex, char **error) {
   //     ----------->
   if (**regex == '*') {
     ++*regex;
+    nfa_uncomplement(&atom);
     atom.final->epsilon1 = atom.initial;
     nfa_pad_initial(&atom), nfa_pad_final(&atom);
     atom.initial->epsilon1 = atom.final;
@@ -546,6 +550,7 @@ static struct nfa parse_term(char **regex, char **error) {
   // -->O-->(atom)-->O-->
   if (**regex == '+') {
     ++*regex;
+    nfa_uncomplement(&atom);
     atom.final->epsilon1 = atom.initial;
     nfa_pad_initial(&atom), nfa_pad_final(&atom);
     return atom;
@@ -555,6 +560,7 @@ static struct nfa parse_term(char **regex, char **error) {
   //     --->
   if (**regex == '?') {
     ++*regex;
+    nfa_uncomplement(&atom);
     if (atom.initial->epsilon1)
       nfa_pad_initial(&atom);
     atom.initial->epsilon1 = atom.final;
@@ -564,6 +570,7 @@ static struct nfa parse_term(char **regex, char **error) {
   char *last_regex = *regex;
   if (**regex == '{') {
     ++*regex;
+    nfa_uncomplement(&atom);
     unsigned min = parse_natural(regex, error);
     if (*error)
       min = 0, *error = NULL;
@@ -622,39 +629,63 @@ static struct nfa parse_term(char **regex, char **error) {
   return atom;
 }
 
-static struct nfa parse_regex(char **regex, char **error) {
-  struct nfa terms = {.complemented = false};
-  terms.initial = terms.final = nstate_alloc();
+static struct nfa parse_term(char **regex, char **error) {
+  bool complement = false;
+  if (**regex == '~')
+    ++*regex, complement = true;
+
+  struct nfa term = {.complemented = false};
+  term.initial = term.final = nstate_alloc();
 
   // hacky lookahead for better diagnostics
-  while (!strchr(")|", **regex)) {
-    struct nfa term = parse_term(regex, error);
+  while (!strchr(")|&", **regex)) {
+    struct nfa factor = parse_factor(regex, error);
     if (*error) {
-      nfa_free(terms);
+      nfa_free(term);
       return (struct nfa){NULL};
     }
 
-    nfa_concat(&terms, term);
+    nfa_uncomplement(&factor);
+    nfa_concat(&term, factor);
   }
 
-  if (**regex == '|') {
-    ++*regex;
-    struct nfa alt = parse_regex(regex, error);
+  if (complement)
+    term.complemented = true;
+
+  return term;
+}
+
+static struct nfa parse_regex(char **regex, char **error) {
+  struct nfa re = parse_term(regex, error);
+  if (*error)
+    return (struct nfa){NULL};
+
+  while (**regex == '|' || **regex == '&') {
+    bool intersect = *(*regex)++ == '&';
+    struct nfa alt = parse_term(regex, error);
     if (*error) {
-      nfa_free(terms);
+      nfa_free(re);
       return (struct nfa){NULL};
     }
 
-    // -->O-->(terms)-->
-    //     --->(alt)--->O-->
-    nfa_pad_initial(&terms), nfa_pad_final(&alt);
-    terms.initial->epsilon1 = alt.initial;
-    terms.final->epsilon0 = alt.final;
-    terms.final->next = alt.initial;
-    terms.final = alt.final;
+    // we perform NFA intersection by rewriting into an alternation using De
+    // Morgan's law `a&b == ~(~a|~b)`. this isn't nearly as inefficient as it
+    // may appear, because NFA complementation is performed lazily
+    re.complemented ^= intersect, alt.complemented ^= intersect;
+    nfa_uncomplement(&re), nfa_uncomplement(&alt);
+
+    // -->O-->(re)--->
+    //     -->(alt)-->O-->
+    nfa_pad_initial(&re), nfa_pad_final(&alt);
+    re.initial->epsilon1 = alt.initial;
+    re.final->epsilon0 = alt.final;
+    re.final->next = alt.initial;
+    re.final = alt.final;
+
+    re.complemented ^= intersect;
   }
 
-  return terms;
+  return re;
 }
 
 struct nfa ltre_parse(char **regex, char **error) {
@@ -694,7 +725,7 @@ static void epsilon_closure(struct nstate *nstate, uint8_t bitset[]) {
 }
 
 struct dstate *ltre_compile(struct nfa nfa) {
-  // full match. powerset construction and minimization
+  // full match. powerset construction followed by DFA minimization
 
   int nfa_size = nfa_get_size(nfa);
 
@@ -741,7 +772,7 @@ struct dstate *ltre_compile(struct nfa nfa) {
     // in its `bitset`
     dstate->accepting = bitset_get(dstate->bitset, nfa.final->id);
     // swap accepting and non-accepting states if the NFA is complemented
-    dstate->accepting = dstate->accepting != nfa.complemented;
+    dstate->accepting ^= nfa.complemented;
   }
 
   int dfa_size = dfa_get_size(dfa);
@@ -750,25 +781,29 @@ struct dstate *ltre_compile(struct nfa nfa) {
   // only if both states have the same `accepting` value and their transitions
   // are equal up to indistinguishability. to avoid having to deal with cycles,
   // we default to all states being indistinguishable then iteratively rule out
-  // the ones that aren't
-  bool dis[dfa_size][dfa_size]; // distinguishability matrix. symmetric
-  memset(dis, false, sizeof(dis));
+  // the ones that aren't. we store state distinguishability information in a
+  // symmetric matrix condensed using bitsets
+  uint8_t dis[dfa_size][(dfa_size + 7) / 8]; // ceil
+  memset(dis, 0x00, sizeof(dis));
   for (bool done = false; (done = !done);)
     for (struct dstate *ds1 = dfa; ds1; ds1 = ds1->next)
       for (struct dstate *ds2 = ds1; ds2; ds2 = ds2->next)
-        if (!dis[ds1->id][ds2->id])
+        if (!bitset_get(dis[ds1->id], ds2->id))
           for (int chr = 0; chr < 256; chr++)
             if (ds1->accepting != ds2->accepting ||
-                dis[ds1->transitions[chr]->id][ds2->transitions[chr]->id])
-              dis[ds1->id][ds2->id] = dis[ds2->id][ds1->id] = true,
+                bitset_get(dis[ds1->transitions[chr]->id],
+                           ds2->transitions[chr]->id)) {
+              bitset_set(dis[ds1->id], ds2->id);
+              bitset_set(dis[ds2->id], ds1->id);
               ds1->terminating = ds2->terminating = false, done = false;
+            }
 
   // minimize DFA by merging indistinguishable states
   for (struct dstate *ds1 = dfa; ds1; ds1 = ds1->next) {
     for (struct dstate *prev = ds1; prev && prev->next; prev = prev->next) {
     redo:;
       struct dstate *ds2 = prev->next;
-      if (dis[ds1->id][ds2->id])
+      if (bitset_get(dis[ds1->id], ds2->id))
         continue;
       // states are indistinguishable. merge them
       for (struct dstate *dstate = dfa; dstate; dstate = dstate->next)
@@ -794,26 +829,25 @@ struct dstate *ltre_compile(struct nfa nfa) {
 
   // nfa_dump(nfa);
   // dfa_dump(dfa);
-
   // printf("%2d -> %2d\n", dfa_size, dfa_get_size(dfa));
 
   return dfa;
 }
 
-// XXX this maintains the invariant that the final state refers to nothing, but
-// does not maintain the invariant that nothing refers to the initial state,
-// which `nfa_concat` requires
 struct nfa ltre_uncompile(struct dstate *dfa) {
   int dfa_size = dfa_get_size(dfa);
 
-  struct nfa nfa = {.complemented = false};
-  nfa.initial = nfa.final = nstate_alloc();
-  struct nstate **tail = &nfa.initial; // used to allocate new NFA states
+  struct nfa nfa = {.initial = nstate_alloc(),
+                    .final = nstate_alloc(),
+                    .complemented = false};
+  struct nstate *tail = nfa.initial; // used to allocate new NFA states
 
   struct nstate *nstates[dfa_size]; // mapping from DFA state to NFA state
   for (int id = 0; id < dfa_size; id++)
-    *tail = nstate_alloc(), nstates[id] = *tail, tail = &(*tail)->next;
+    nstates[id] = tail->next = nstate_alloc(), tail = tail->next;
 
+  dfa->id && (abort(), 0); // stops GCC complaining about the line below
+  nfa.initial->epsilon1 = nstates[dfa->id];
   // use `epsilon1` transitions to `nfa.final` to model accepting states
   for (struct dstate *dstate = dfa; dstate; dstate = dstate->next)
     if (dstate->accepting)
@@ -845,7 +879,7 @@ struct nfa ltre_uncompile(struct dstate *dfa) {
         // first iteration. make sure the root of the tree comes from `nstates`
         free = nstates[ds1->id], src = free;
       else {
-        *tail = nstate_alloc(), src = *tail;
+        src = tail->next = nstate_alloc(), tail = tail->next;
 
         // maintain that `free` is an `nstate` with at least one unused epsilon
         // transition. if `epsilon1` is unused then use it to point to our
@@ -856,10 +890,9 @@ struct nfa ltre_uncompile(struct dstate *dfa) {
         // unbalanced, but generating it is easy and it is still twice as
         // efficient as a linked list would be
         if (!free->epsilon1)
-          free->epsilon1 = *tail;
+          free->epsilon1 = tail;
         else
-          free->epsilon0 = *tail, free = *tail;
-        tail = &(*tail)->next;
+          free->epsilon0 = tail, free = tail;
       }
 
       src->target = nstates[ds2->id];
@@ -867,16 +900,20 @@ struct nfa ltre_uncompile(struct dstate *dfa) {
     }
   }
 
-  *tail = nfa.final;
+  tail->next = nfa.final;
+
+  // dfa_dump(dfa);
+  // nfa_dump(nfa);
+  // printf("%2d -> %2d\n", dfa_size, nfa_get_size(nfa));
 
   return nfa;
 }
 
 char *ltre_decompile(struct dstate *dfa) {
   // we codegen the DFA straight into a regular expression string. start by
-  // turning the DFA into a matrix of `arrow`s on the stack, each of which
-  // holds a regular expression string as label and a precedence value for
-  // parenthesizing
+  // turning the DFA into a GNFA stored as a matrix of `arrow`s on the stack,
+  // each of which holds a regular expression string as label and a precedence
+  // value for parenthesizing
   enum prec {
     ALT,    // outermost is an alternation
     CONCAT, // outermost is a concatenation
@@ -930,12 +967,12 @@ char *ltre_decompile(struct dstate *dfa) {
     }
   }
 
-  // iteratively select one state according to some metric and reroute all its
-  // inbound and outbound transitions so as to bypass that state, while also
+  // iteratively select one state according to some heuristic and reroute all
+  // its inbound and outbound transitions so as to bypass that state, while also
   // taking care of self-loops. don't ever select the auxiliary state, so that
   // when we're done the final regular expression ends up as a self-loop on the
   // auxiliary state. choosing the state with minimal vertex degree seems to
-  // work okay, sa that's the metric we're using
+  // work okay, sa that's the heuristic we're using
   while (1) {
     int best_fit;
     int min_degree = INT_MAX;
@@ -958,10 +995,10 @@ char *ltre_decompile(struct dstate *dfa) {
     // those to and from the auxiliary state
     for (int id1 = 0; id1 <= dfa_size; id1++) {
       if (id1 == best_fit)
-        continue; // inbound transition must not come from the best-fit state
+        continue; // inbound transition must not be a self-loop
       for (int id2 = 0; id2 <= dfa_size; id2++) {
         if (id2 == best_fit)
-          continue; // outbound transition must not lead to the best-fit state
+          continue; // outbound transition must not be a self-loop
         struct arrow in = arrows[id1][best_fit];  // current inbound transition
         struct arrow out = arrows[best_fit][id2]; // current outbout transition
         struct arrow self = arrows[best_fit][best_fit]; // self-transition

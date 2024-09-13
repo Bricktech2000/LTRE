@@ -59,7 +59,7 @@ int main(void) {
   nomatch("(a*)*c", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
   nomatch("(x+x+)+y", "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
 
-  // exponential blowout
+  // exponential state blowout
   qmatch("[01]*1[01]{8}", "11011100011100");
   qnomatch("[01]*1[01]{8}", "01010010010010");
 
@@ -250,6 +250,27 @@ int main(void) {
   nomatch("a{}", "a");
   match("a{,}", "");
   match("a{,}", "a");
+  nomatch("~0*", "");
+  nomatch("~0*", "0");
+  nomatch("~0*", "00");
+  match("~0*", "001");
+  nomatch("ab&cd", "");
+  nomatch("ab&cd", "ab");
+  nomatch("ab&cd", "cd");
+  nomatch("\\w+&~\\d+", "");
+  match("\\w+&~\\d+", "abc");
+  match("\\w+&~\\d+", "abc123");
+  match("\\w+&~\\d+", "1a2b3c");
+  nomatch("\\w+&~\\d+", "123");
+  nomatch("0x(~[0-9a-f]+)", "0yz");
+  nomatch("0x(~[0-9a-f]+)", "0x12");
+  match("0x(~[0-9a-f]+)", "0x");
+  match("0x(~[0-9a-f]+)", "0xy");
+  match("0x(~[0-9a-f]+)", "0xyz");
+  nomatch("b(~a*)", "");
+  nomatch("b(~a*)", "b");
+  nomatch("b(~a*)", "ba");
+  match("b(~a*)", "bbaa");
   error("abc>", "");
   error("<abc", "");
   error("[a?b]", "");
@@ -269,8 +290,15 @@ int main(void) {
   error("a{1 2}", "");
   error("a{1, 2}", "");
   error("a{a}", "");
+  error("a~b", "");
 
   // realistic regexes
+#define HEX_RGB "#([0-9a-fA-F]{3}){1,2}"
+  nomatch(HEX_RGB, "000");
+  match(HEX_RGB, "#0aA");
+  nomatch(HEX_RGB, "#00ff");
+  match(HEX_RGB, "#abcdef");
+  nomatch(HEX_RGB, "#abcdeff");
 #define STR_LIT "\"(^[\\\\\"]|\\\\<>)*\""
   nomatch(STR_LIT, "foo");
   nomatch(STR_LIT, "\"foo");
@@ -283,17 +311,20 @@ int main(void) {
   match(STR_LIT, "\"foo\\\"\"");
   match(STR_LIT, "\"foo\\\\\"");
   match(STR_LIT, "\"foo\\nbar\"");
-  // ISO/IEC 9899:TC3 $7.19.6.1 'The fprintf function'
+  // ISO/IEC 9899:TC3 $7.19.6.1 'The fprintf function'.
+  // see also gcc-14/gcc/c-family/c-format.cc:713 'print_char_table'
+  // and gcc-14/gcc/c-family/c-format.h:25 'enum format_lengths'
 #define FIELD_WIDTH "(\\*|1-90-9*)?"
 #define PRECISION "(\\.|\\.\\*|\\.1-90-9*)?"
-#define DIU "[\\-\\+ 0]*" FIELD_WIDTH PRECISION "([hljzt]|hh|ll)?[diu]"
-#define OX "[\\-\\+ #0]*" FIELD_WIDTH PRECISION "([hljzt]|hh|ll)?[oxX]"
+#define DI "[\\-\\+ 0]*" FIELD_WIDTH PRECISION "([hljzt]|hh|ll)?[di]"
+#define U "[\\-0]*" FIELD_WIDTH PRECISION "([hljzt]|hh|ll)?u"
+#define OX "[\\-#0]*" FIELD_WIDTH PRECISION "([hljzt]|hh|ll)?[oxX]"
 #define FEGA "[\\-\\+ #0]*" FIELD_WIDTH PRECISION "[lL]?[fFeEgGaA]"
-#define C "[\\-\\+ ]*" FIELD_WIDTH "l?c"
-#define S "[\\-\\+ ]*" FIELD_WIDTH PRECISION "l?s"
-#define P "[\\-\\+ ]*" FIELD_WIDTH "p"
-#define N "[\\-\\+ ]*" FIELD_WIDTH "([hljzt]|hh|ll)?n"
-#define CONV_SPEC "%(" DIU "|" OX "|" FEGA "|" C "|" S "|" P "|" N "|%)"
+#define C "\\-*" FIELD_WIDTH "l?c"
+#define S "\\-*" FIELD_WIDTH PRECISION "l?s"
+#define P "\\-*" FIELD_WIDTH "p"
+#define N FIELD_WIDTH "([hljzt]|hh|ll)?n"
+#define CONV_SPEC "%(" DI "|" U "|" OX "|" FEGA "|" C "|" S "|" P "|" N "|%)"
 #define FORMAT "(^%|" CONV_SPEC ")*"
   qnomatch(CONV_SPEC, "%");
   qnomatch(CONV_SPEC, "%*");
@@ -305,7 +336,7 @@ int main(void) {
   qnomatch(FORMAT, "%5%");
   qmatch(CONV_SPEC, "%p");
   qmatch(CONV_SPEC, "%*p");
-  qmatch(CONV_SPEC, "% *p");
+  qnomatch(CONV_SPEC, "% *p");
   qmatch(CONV_SPEC, "%5p");
   qnomatch(CONV_SPEC, "d");
   qmatch(CONV_SPEC, "%d");
@@ -324,11 +355,14 @@ int main(void) {
   qnomatch(CONV_SPEC, "%%d");
   qnomatch(CONV_SPEC, "i%d");
   qnomatch(CONV_SPEC, "%c%s");
+  qnomatch(CONV_SPEC, "%0n");
+  qnomatch(CONV_SPEC, "% u");
+  qnomatch(CONV_SPEC, "%+c");
   qmatch(FORMAT, "%id");
   qmatch(FORMAT, "%%d");
   qmatch(FORMAT, "i%d");
   qmatch(FORMAT, "%c%s");
-  qmatch(CONV_SPEC, "%0-++ #0x");
+  qmatch(CONV_SPEC, "%0-++ 0i");
   qmatch(CONV_SPEC, "%30c");
   qnomatch(CONV_SPEC, "%03c");
   qmatch(FORMAT, "%u + %d");
