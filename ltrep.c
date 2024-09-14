@@ -13,12 +13,18 @@ struct dstate {
   bool terminating;
 };
 
-struct opts {
-  bool invert;  // -v
-  bool full;    // -x
-  bool ignore;  // -i
-  bool lineno;  // -n
-  bool count;   // -c
+const char *opts = "vxiFnHch";
+struct args {
+  struct {
+    bool invert; // -v
+    bool full;   // -x
+    bool ignore; // -i
+    bool fixed;  // -F
+    bool lineno; // -n
+    bool file;   // -H
+    bool count;  // -c
+    bool help;   // -h
+  } opts;
   char *regex;  // <regex>
   char **files; // [files...]
 };
@@ -33,70 +39,56 @@ struct opts {
   "  -v  invert match; print non-matching lines\n"                             \
   "  -x  full match; match against whole lines\n"                              \
   "  -i  ignore case; match case-insensitively\n"                              \
-  "  -n  prefix matched lines with line number\n"                              \
-  "  -c  only print a count of matched lines\n"                                \
+  "  -F  interpret the regex as a fixed string\n"                              \
+  "  -n  prefix matching lines with line numbers\n"                            \
+  "  -H  prefix matching lines with file names\n"                              \
+  "  -c  only print a count of matching lines\n"                               \
   "  -h  display this help message and exit\n"
+#define INV "Unrecognized option '-%.*s'\n"
 
-struct opts parse_opts(int argc, char **argv) {
-  argc--, argv++;
-  struct opts opts = {0};
+struct args parse_args(char **argv) {
+  struct args args = {0};
 
-  if (argc == 0)
+  if (!*++argv)
     fputs(DESC HELP, stdout), exit(EXIT_FAILURE);
 
-  while (argc) {
-    if (argv[0][0] != '-' || argv[0][2] != '\0')
-      break;
-
-    switch (argv[0][1]) {
-    case 'v':
-      opts.invert = true;
-      break;
-    case 'x':
-      opts.full = true;
-      break;
-    case 'i':
-      opts.ignore = true;
-      break;
-    case 'n':
-      opts.lineno = true;
-      break;
-    case 'c':
-      opts.count = true;
-      break;
-    case 'h':
-      fputs(DESC USAGE OPTS, stdout), exit(EXIT_SUCCESS);
-    default:
-    usage:
-      fputs(USAGE HELP, stdout), exit(EXIT_FAILURE);
+  for (; *argv && **argv == '-'; argv++) {
+    for (char *p, *opt = *argv + 1; *opt; opt++) {
+      if ((p = strchr(opts, *opt)))
+        (&args.opts.invert)[p - opts] = true;
+      else
+        printf(INV HELP, *opt == '-' ? -1 : 1, opt), exit(EXIT_FAILURE);
     }
-
-    argc--, argv++;
   }
 
-  if (argc < 1)
-    goto usage;
+  if (args.opts.help)
+    fputs(DESC USAGE OPTS, stdout), exit(EXIT_SUCCESS);
 
-  opts.regex = argv[0];
-  argc--, argv++;
-  opts.files = argv;
-  return opts;
+  if (!*argv)
+    fputs(USAGE HELP, stdout), exit(EXIT_FAILURE);
+  args.regex = *argv;
+  args.files = ++argv;
+
+  return args;
 }
 
 int main(int argc, char **argv) {
-  struct opts opts = parse_opts(argc, argv);
+  struct args args = parse_args(argv);
 
-  char *error = NULL, *loc = opts.regex;
-  struct nfa nfa = ltre_parse(&loc, &error);
+  char *error = NULL, *loc = args.regex;
+  struct nfa nfa =
+      args.opts.fixed ? ltre_fixed_string(loc) : ltre_parse(&loc, &error);
   if (error)
     fprintf(stderr, "parse error: %s near '%.16s'\n", error, loc),
         exit(EXIT_FAILURE);
-  if (!opts.full)
+
+  if (!args.opts.full)
     ltre_partial(&nfa);
-  if (opts.ignore)
+  if (args.opts.ignore)
     ltre_ignorecase(&nfa);
-  if (opts.invert)
+  if (args.opts.invert)
     ltre_complement(&nfa);
+
   struct dstate *dfa = ltre_compile(nfa);
 
   int lineno = 0;
@@ -106,25 +98,32 @@ int main(int argc, char **argv) {
   lineno++;                                                                    \
   if (COND) {                                                                  \
     count++;                                                                   \
-    if (opts.count)                                                            \
+    if (args.opts.count)                                                       \
       continue;                                                                \
-    if (opts.lineno)                                                           \
+    if (args.opts.file)                                                        \
+      printf("%s:", *file);                                                    \
+    if (args.opts.lineno)                                                      \
       printf("%d:", lineno);                                                   \
-    fwrite(line, sizeof(uint8_t), nl - line + 1, stdout);                      \
+    fwrite(line, sizeof(uint8_t), nl - line, stdout);                          \
+    fputc('\n', stdout);                                                       \
   }
 
-  if (!*opts.files) {
+  if (!*args.files) {
     // read from stdin
     size_t len = 0, cap = 256;
     uint8_t *nl, *line = malloc(cap);
     while (fgets((char *)line + len, cap - len, stdin) != NULL) {
       if ((nl = memchr(line + len, '\n', cap - len)) == NULL) {
-        len = cap - 1, line = realloc(line, cap *= 2);
-        continue;
+        if (!feof(stdin)) {
+          len = cap - 1, line = realloc(line, cap *= 2);
+          continue;
+        }
+        nl = memchr(line + len, '\0', cap - len);
       }
       *nl = '\0', len = 0;
 
-      OUTPUT_IF(ltre_matches(dfa, line) && (*nl = '\n'));
+      char **file = &(char *){"<stdin>"}; // fun
+      OUTPUT_IF(ltre_matches(dfa, line));
     }
 
     if (!feof(stdin))
@@ -132,7 +131,7 @@ int main(int argc, char **argv) {
     free(line);
   }
 
-  for (char **file = opts.files; *file; file++) {
+  for (char **file = args.files; *file; file++) {
     // memory-map file
     int fd = open(*file, O_RDONLY);
     if (fd == -1)
@@ -153,8 +152,6 @@ int main(int argc, char **argv) {
         nl = nl ? nl : data + len;
       }
 
-      if (opts.files[1] && dstate->accepting)
-        printf("%s:", *file);
       OUTPUT_IF(dstate->accepting);
     }
 
@@ -162,7 +159,7 @@ int main(int argc, char **argv) {
       perror("close"), exit(EXIT_FAILURE);
   }
 
-  if (opts.count)
+  if (args.opts.count)
     printf("%d\n", count);
 
   nfa_free(nfa), dfa_free(dfa);

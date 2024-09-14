@@ -16,6 +16,7 @@ struct nfa {
 };
 
 struct nfa ltre_parse(char **regex, char **error);
+struct nfa ltre_fixed_string(char *string);
 void ltre_partial(struct nfa *nfa);
 void ltre_ignorecase(struct nfa *nfa);
 void ltre_complement(struct nfa *nfa);

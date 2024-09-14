@@ -311,7 +311,7 @@ int main(void) {
   match(STR_LIT, "\"foo\\\"\"");
   match(STR_LIT, "\"foo\\\\\"");
   match(STR_LIT, "\"foo\\nbar\"");
-  // ISO/IEC 9899:TC3 $7.19.6.1 'The fprintf function'.
+  // ISO/IEC 9899:TC3, $7.19.6.1 'The fprintf function'.
   // see also gcc-14/gcc/c-family/c-format.cc:713 'print_char_table'
   // and gcc-14/gcc/c-family/c-format.h:25 'enum format_lengths'
 #define FIELD_WIDTH "(\\*|1-90-9*)?"

@@ -99,12 +99,7 @@ static char *symset_fmt(symset_t symset) {
 
 static struct nstate *nstate_alloc(void) {
   struct nstate *nstate = malloc(sizeof(struct nstate));
-  memset(nstate->label, 0x00, sizeof(symset_t));
-  nstate->target = NULL;
-  nstate->epsilon0 = NULL;
-  nstate->epsilon1 = NULL;
-  nstate->next = NULL;
-  nstate->id = -1;
+  *nstate = (struct nstate){.id = -1};
   return nstate;
 }
 
@@ -205,7 +200,7 @@ void nfa_dump(struct nfa nfa) {
 
     bool empty = true;
     for (int i = 0; i < sizeof(symset_t); i++)
-      empty = empty && !nstate->label[i];
+      empty &= !nstate->label[i];
 
     if (empty)
       continue;
@@ -220,11 +215,7 @@ void nfa_dump(struct nfa nfa) {
 
 static struct dstate *dstate_alloc(int bitset_size) {
   struct dstate *dstate = malloc(sizeof(struct dstate) + bitset_size);
-  memset(dstate->transitions, 0, sizeof(dstate->transitions));
-  dstate->accepting = false;
-  dstate->terminating = false;
-  dstate->id = -1;
-  dstate->next = NULL;
+  *dstate = (struct dstate){.id = -1};
   memset(dstate->bitset, 0x00, bitset_size);
   return dstate;
 }
@@ -707,6 +698,23 @@ struct nfa ltre_parse(char **regex, char **error) {
     *error = "expected end of input";
     nfa_free(nfa);
     return (struct nfa){NULL};
+  }
+
+  return nfa;
+}
+
+struct nfa ltre_fixed_string(char *string) {
+  // parses a fixed string into an NFA. never errors
+
+  struct nfa nfa = {.complemented = false};
+  nfa.initial = nfa.final = nstate_alloc();
+
+  for (; *string; string++) {
+    struct nstate *initial = nfa.final;
+    nfa.final = nstate_alloc();
+    initial->next = nfa.final;
+    initial->target = nfa.final;
+    bitset_set(initial->label, *string);
   }
 
   return nfa;
