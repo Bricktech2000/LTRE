@@ -1,10 +1,10 @@
 # LTRE
 
-_A linear-time regular expression engine_
+_Finite automaton regular expression engine_
 
 ## Overview
 
-LTRE is a regular expression library written in C99 which has no dependencies but the C standard library. It parses regular expressions into NFAs then compiles them down to minimal DFAs for linear-time matching. It also provides facilities for manipulating NFAs and for decompiling DFAs back into regular expressions.
+LTRE is a regular expression library written in C99 that has no dependencies but the C standard library. It parses regular expressions into NFAs then compiles them down to minimal DFAs for linear-time matching. It also provides facilities for manipulating NFAs, for lazily constructing DFAs and for decompiling DFAs back into regular expressions.
 
 For sample regular expressions, see the test suite [test.c](test.c). For a more realistic use-case, see the minimal command-line search tool [ltrep.c](ltrep.c). For a demo of DFA decompilation, see the regex complementation tool [compl.c](compl.c)
 
@@ -62,8 +62,8 @@ Supported features are as follows:
 | Optional             | `a?`     | Matches zero or one `a`               | `regex -> regex`             |
 | Exact Repetition     | `a{4}`   | Matches exactly 4 `a`s                | `regex -> regex`             |
 | Bounded Repetition   | `a{3,5}` | Matches 3 to 5 `a`s                   | `regex -> regex`             |
-| Bounded Below        | `a{3,}`  | Matches at least 3 `a`s               | `regex -> regex`             |
-| Bounded Above        | `a{,5}`  | Matches at most 5 `a`s                | `regex -> regex`             |
+| Minimum Repetition   | `a{3,}`  | Matches at least 3 `a`s               | `regex -> regex`             |
+| Maximum Repetition   | `a{,5}`  | Matches at most 5 `a`s                | `regex -> regex`             |
 | Concatenation        | `ab`     | Matches `a` followed by `b`           | `(regex, regex) -> regex`    |
 | Alternation          | `a\|b`   | Matches either `a` or `b`             | `(regex, regex) -> regex`    |
 | Intersection         | `a&b`    | Matches simultaneously `a` and `b`    | `(regex, regex) -> regex`    |

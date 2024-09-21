@@ -35,11 +35,14 @@ struct dstate {
   uint8_t bitset[];    // powerset representation during powerset construction
 };
 
-static bool bitset_get(uint8_t bitset[], int id) {
+// do not switch out these `unsigned`s for `int`s without a benchmark. on
+// x86_64, `unsigned` saves us a `cdqe` instruction in the fragment `id / 8`
+// and speeds up the hot loop in `dfa_step` by 10%
+static bool bitset_get(uint8_t bitset[], unsigned id) {
   return bitset[id / 8] & 1 << id % 8;
 }
 
-static void bitset_set(uint8_t bitset[], int id) {
+static void bitset_set(uint8_t bitset[], unsigned id) {
   bitset[id / 8] |= 1 << id % 8;
 }
 
@@ -720,6 +723,36 @@ struct nfa ltre_fixed_string(char *string) {
   return nfa;
 }
 
+void ltre_partial(struct nfa *nfa) {
+  // enable partial matching. effectively, surround the NFA by a pair of `<>*`s
+  nfa_uncomplement(nfa);
+  nfa_pad_initial(nfa), nfa_pad_final(nfa);
+  nfa->initial->target = nfa->initial;
+  nfa->final->target = nfa->final;
+  memset(nfa->initial->label, 0xff, sizeof(symset_t));
+  memset(nfa->final->label, 0xff, sizeof(symset_t));
+}
+
+void ltre_ignorecase(struct nfa *nfa) {
+  // enable case-insensitive matching. effectively, for any character a labeled
+  // transition contains, make it also contain its swapped-case counterpart
+  nfa_uncomplement(nfa);
+  for (struct nstate *nstate = nfa->initial; nstate; nstate = nstate->next) {
+    for (int chr = 0; chr <= 256; chr++) {
+      if (bitset_get(nstate->label, chr)) {
+        bitset_set(nstate->label, tolower(chr));
+        bitset_set(nstate->label, toupper(chr));
+      }
+    }
+  }
+}
+
+void ltre_complement(struct nfa *nfa) {
+  // complement accepted language. `dfa_walk` will read this flag when marking
+  // accepting states
+  nfa->complemented = !nfa->complemented;
+}
+
 static void epsilon_closure(struct nstate *nstate, uint8_t bitset[]) {
   if (!nstate)
     return;
@@ -732,56 +765,70 @@ static void epsilon_closure(struct nstate *nstate, uint8_t bitset[]) {
   epsilon_closure(nstate->epsilon1, bitset);
 }
 
+static void dfa_step(struct dstate **dfap, struct dstate *dstate, uint8_t chr,
+                     struct nfa nfa, int nfa_size, struct nstate *nstates[]) {
+  // step the DFA `*dfap` starting from state `dstate` by consuming input
+  // character `chr` according to the NFA `nfa`. `nstates` shall expose the
+  // states of the NFA `nfa` as an array of state pointers of length `nfa_size`.
+  // this routine creates new DFA states as needed. call initially with `dstate
+  // == NULL` to create a DFA state corresponding to the epsilon-closure of the
+  // NFA's initial state
+
+  int bitset_size = (nfa_size + 7) / 8; // ceil
+  uint8_t bitset_union[bitset_size];
+  memset(bitset_union, 0x00, bitset_size);
+
+  if (dstate) {
+    // compute the "superposition" of NFA states reachable by consuming `chr`.
+    // using the array of state pointers `nstates` speeds up this hot loop by
+    // 2.5x over iterating through the states linked list using `nstate->next`,
+    // probably because it helps out the prefetches and breaks the memory load
+    // dependency chain
+    for (int id = 0; id < nfa_size; id++)
+      if (bitset_get(dstate->bitset, id) && bitset_get(nstates[id]->label, chr))
+        epsilon_closure(nstates[id]->target, bitset_union);
+  } else
+    epsilon_closure(nfa.initial, bitset_union);
+
+  // create a DFA state whose `bitset` corresponds to this "superposition",
+  // if it doesn't already exist. binary tree not necessary, linear search
+  // is just as fast
+  struct dstate **dstatep = dfap;
+  while (*dstatep && memcmp((*dstatep)->bitset, bitset_union, bitset_size))
+    dstatep = &(*dstatep)->next;
+
+  if (!*dstatep) {
+    *dstatep = dstate_alloc(bitset_size);
+    memcpy((*dstatep)->bitset, bitset_union, bitset_size);
+
+    // a DFA state is accepting if and only if it contains the NFA's final state
+    // in its `bitset`. also make sure to swap accepting and non-accepting
+    // states if the NFA is complemented
+    (*dstatep)->accepting = bitset_get(bitset_union, nfa.final->id);
+    (*dstatep)->accepting ^= nfa.complemented;
+  }
+
+  if (dstate)
+    // patch the `chr` transition to point to this new (or existing) state
+    dstate->transitions[chr] = *dstatep;
+}
+
 struct dstate *ltre_compile(struct nfa nfa) {
-  // full match. powerset construction followed by DFA minimization
+  // fully compile DFA. powerset construction followed by DFA minimization
 
   int nfa_size = nfa_get_size(nfa);
-
-  // cache locality, probably
   struct nstate *nstates[nfa_size];
   for (struct nstate *nstate = nfa.initial; nstate; nstate = nstate->next)
     nstates[nstate->id] = nstate;
 
-  int bitset_size = (nfa_size + 7) / 8; // ceil
-
-  struct dstate *dfa = dstate_alloc(bitset_size);
-  epsilon_closure(nfa.initial, dfa->bitset);
+  struct dstate *dfa = NULL;
+  dfa_step(&dfa, NULL, 0, nfa, nfa_size, nstates);
 
   // construct new DFA states as we're iterating over them and patching
-  // transitions, starting from the epsilon closure of the NFA's initial state
-  for (struct dstate *dstate = dfa; dstate; dstate = dstate->next) {
-    for (int chr = 0; chr < 256; chr++) {
-      uint8_t bitset_union[bitset_size];
-      memset(bitset_union, 0x00, bitset_size);
-
-      // compute the "superposition" of NFA states reachable by consuming `chr`
-      for (int id = 0; id < nfa_size; id++)
-        if (bitset_get(dstate->bitset, id) &&
-            bitset_get(nstates[id]->label, chr))
-          epsilon_closure(nstates[id]->target, bitset_union);
-
-      // create a DFA state whose `bitset` corresponds to this "superposition",
-      // if it doesn't already exist. binary tree not necessary, linear search
-      // is just as fast
-      struct dstate **dstatep = &dfa;
-      while (*dstatep && memcmp((*dstatep)->bitset, bitset_union, bitset_size))
-        dstatep = &(*dstatep)->next;
-
-      if (!*dstatep) {
-        *dstatep = dstate_alloc(bitset_size);
-        memcpy((*dstatep)->bitset, bitset_union, bitset_size);
-      }
-
-      // patch the `chr` transition to point to this new (or existing) state
-      dstate->transitions[chr] = *dstatep;
-    }
-
-    // a DFA state is accepting if and only if it contains the NFA's final state
-    // in its `bitset`
-    dstate->accepting = bitset_get(dstate->bitset, nfa.final->id);
-    // swap accepting and non-accepting states if the NFA is complemented
-    dstate->accepting ^= nfa.complemented;
-  }
+  // transitions, starting from the epsilon-closure of the NFA's initial state
+  for (struct dstate *dstate = dfa; dstate; dstate = dstate->next)
+    for (int chr = 0; chr < 256; chr++)
+      dfa_step(&dfa, dstate, chr, nfa, nfa_size, nstates);
 
   int dfa_size = dfa_get_size(dfa);
 
@@ -842,6 +889,35 @@ struct dstate *ltre_compile(struct nfa nfa) {
   return dfa;
 }
 
+bool ltre_matches(struct dstate *dfa, uint8_t *input) {
+  // time linear in the input length :)
+  for (; !dfa->terminating && *input; input++)
+    dfa = dfa->transitions[*input];
+  return dfa->accepting;
+}
+
+bool ltre_matches_lazy(struct dstate **dfap, struct nfa nfa, uint8_t *input) {
+  // Thompson's algorithm. lazily create new DFA states as we need them. cached
+  // DFA states are stored in `*dfap`. call initially with an empty cache useng
+  // `*dfap == NULL`, and make sure to `dfa_free(*dfap)` when finished with this
+  // NFA
+
+  int nfa_size = nfa_get_size(nfa);
+  struct nstate *nstates[nfa_size];
+  for (struct nstate *nstate = nfa.initial; nstate; nstate = nstate->next)
+    nstates[nstate->id] = nstate;
+
+  dfa_step(dfap, NULL, 0, nfa, nfa_size, nstates);
+
+  // time linear in the input length :)
+  struct dstate *dstate = *dfap;
+  for (; *input; dstate = dstate->transitions[*input++])
+    if (!dstate->transitions[*input])
+      dfa_step(dfap, dstate, *input, nfa, nfa_size, nstates);
+
+  return dstate->accepting;
+}
+
 struct nfa ltre_uncompile(struct dstate *dfa) {
   int dfa_size = dfa_get_size(dfa);
 
@@ -854,7 +930,6 @@ struct nfa ltre_uncompile(struct dstate *dfa) {
   for (int id = 0; id < dfa_size; id++)
     nstates[id] = tail->next = nstate_alloc(), tail = tail->next;
 
-  dfa->id && (abort(), 0); // stops GCC complaining about the line below
   nfa.initial->epsilon1 = nstates[dfa->id];
   // use `epsilon1` transitions to `nfa.final` to model accepting states
   for (struct dstate *dstate = dfa; dstate; dstate = dstate->next)
@@ -1201,41 +1276,4 @@ char *ltre_decompile(struct dstate *dfa) {
     regex = malloc(3), strcpy(regex, "[]");
 
   return regex;
-}
-
-void ltre_partial(struct nfa *nfa) {
-  // enable partial matching. effectively, surround the NFA by a pair of `<>*`s
-  nfa_uncomplement(nfa);
-  nfa_pad_initial(nfa), nfa_pad_final(nfa);
-  nfa->initial->target = nfa->initial;
-  nfa->final->target = nfa->final;
-  memset(nfa->initial->label, 0xff, sizeof(symset_t));
-  memset(nfa->final->label, 0xff, sizeof(symset_t));
-}
-
-void ltre_ignorecase(struct nfa *nfa) {
-  // enable case-insensitive matching. effectively, for any character a labeled
-  // transition contains, make it also contain its swapped-case counterpart
-  nfa_uncomplement(nfa);
-  for (struct nstate *nstate = nfa->initial; nstate; nstate = nstate->next) {
-    for (int chr = 0; chr <= 256; chr++) {
-      if (bitset_get(nstate->label, chr)) {
-        bitset_set(nstate->label, tolower(chr));
-        bitset_set(nstate->label, toupper(chr));
-      }
-    }
-  }
-}
-
-void ltre_complement(struct nfa *nfa) {
-  // complement accepted language. `ltre_compile` will read this flag when
-  // marking accepting states
-  nfa->complemented = !nfa->complemented;
-}
-
-bool ltre_matches(struct dstate *dfa, uint8_t *input) {
-  // time linear in the input length :)
-  for (; !dfa->terminating && *input; input++)
-    dfa = dfa->transitions[*input];
-  return dfa->accepting;
 }

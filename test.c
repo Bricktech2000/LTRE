@@ -17,15 +17,16 @@ struct test {
 void test(struct test args) {
 #define test(...) test((struct test){__VA_ARGS__})
   static struct test memo = {0};
-  static struct dstate *dfa = NULL;
+  static struct nfa nfa = {NULL};
+  static struct dstate *dfa = NULL, *ldfa = NULL;
 
   if (dfa && strcmp(memo.regex, args.regex) == 0 &&
       memcmp(&memo.errors, &args.errors, sizeof(bool[5])) == 0)
     goto check_matches;
-  memo = args, dfa_free(dfa), dfa = NULL;
+  memo = args;
 
   char *error = NULL, *loc = args.regex;
-  struct nfa nfa = ltre_parse(&loc, &error);
+  nfa_free(nfa), nfa = ltre_parse(&loc, &error);
 
   if (!!error != args.errors)
     printf("test failed: /%s/ parse\n", args.regex);
@@ -52,10 +53,11 @@ void test(struct test args) {
     dfa_free(dfa), dfa = ltre_compile(nfa);
     free(re);
   }
-  nfa_free(nfa);
+  dfa_free(ldfa), ldfa = NULL;
 
 check_matches:
-  if (ltre_matches(dfa, (uint8_t *)args.input) != args.matches)
+  if (ltre_matches(dfa, (uint8_t *)args.input) != args.matches ||
+      ltre_matches_lazy(&ldfa, nfa, (uint8_t *)args.input) != args.matches)
     printf("test failed: /%s/ against '%s'\n", args.regex, args.input);
 }
 
