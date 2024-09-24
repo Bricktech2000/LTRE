@@ -43,16 +43,24 @@ void test(struct test args) {
   if (args.complement)
     ltre_complement(&nfa);
 
+  // NFA -> DFA
   dfa_free(dfa), dfa = ltre_compile(nfa);
+
+  // DFA -> BUF -> DFA -> NFA -> DFA
+  uint8_t *buf = dfa_serialize(dfa, &(size_t){0});
+  dfa_free(dfa), dfa = dfa_deserialize(buf, &(size_t){0});
+  nfa_free(nfa), nfa = ltre_uncompile(dfa);
+  dfa_free(dfa), dfa = ltre_compile(nfa);
+  free(buf);
+
   if (!args.quick) {
-    // DFA -> re -> NFA -> DFA -> NFA -> DFA
+    // DFA -> RE -> NFA -> DFA
     char *re = ltre_decompile(dfa);
     nfa_free(nfa), nfa = ltre_parse(&re, NULL);
     dfa_free(dfa), dfa = ltre_compile(nfa);
-    nfa_free(nfa), nfa = ltre_uncompile(dfa);
-    dfa_free(dfa), dfa = ltre_compile(nfa);
     free(re);
   }
+
   dfa_free(ldfa), ldfa = NULL;
 
 check_matches:

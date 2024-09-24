@@ -1,4 +1,5 @@
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 struct dstate;
@@ -19,6 +20,8 @@ struct nfa {
 
 void nfa_free(struct nfa nfa);
 void dfa_free(struct dstate *dfa);
+uint8_t *dfa_serialize(struct dstate *dfa, size_t *size);
+struct dstate *dfa_deserialize(uint8_t *buf, size_t *size);
 struct nfa ltre_parse(char **regex, char **error);
 struct nfa ltre_fixed_string(char *string);
 void ltre_partial(struct nfa *nfa);

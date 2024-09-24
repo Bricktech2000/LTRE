@@ -236,6 +236,86 @@ static int dfa_get_size(struct dstate *dfa) {
   return dfa_size;
 }
 
+static void leb128_put(uint8_t **p, int n) {
+  while (n >> 7)
+    *(*p)++ = (n & 0x7f) | 0x80, n >>= 7;
+  *(*p)++ = n;
+}
+
+static int leb128_get(uint8_t **p) {
+  int n = 0, c = 0;
+  do
+    n |= (**p & 0x7f) << c++ * 7;
+  while (*(*p)++ & 0x80);
+
+  return n;
+}
+
+uint8_t *dfa_serialize(struct dstate *dfa, size_t *size) {
+  // serialize a DFA using a mix of RLE and LEB128. `size` is an out parameter
+
+  int dfa_size = dfa_get_size(dfa);
+
+  // len(leb128(dfa_size)) == ceil(log128(dfa_size))
+  int ceil_log128 = 0;
+  for (int s = dfa_size; s >>= 7;)
+    ceil_log128++;
+  ceil_log128++;
+
+  uint8_t *buf = malloc(ceil_log128), *p = buf;
+  leb128_put(&p, dfa_size);
+
+  for (struct dstate *dstate = dfa; dstate; dstate = dstate->next) {
+    // ensure buffer large enough for worst case. worst case is typically
+    // around 500 bytes larger than best case, so this is not too wasteful
+    // <accepting_terminating> + 256 * (<run_length> + <leb128(dfa_size)>)
+    uint8_t *new = realloc(buf, (p - buf) + 1 + 256 * (1 + ceil_log128));
+    p = p - buf + new, buf = new;
+
+    *p++ = dstate->accepting << 1 | dstate->terminating;
+    for (int chr = 0; chr < 256;) {
+      int start = chr;
+      while (chr < 255 &&
+             dstate->transitions[chr] == dstate->transitions[chr + 1])
+        chr++;
+      *p++ = chr - start; // run length
+      leb128_put(&p, dstate->transitions[chr++]->id);
+    }
+  }
+
+  *size = p - buf;
+  return realloc(buf, p - buf); // don't be wasteful
+}
+
+struct dstate *dfa_deserialize(uint8_t *buf, size_t *size) {
+  // deserialize a DFA from a **trusted** buffer. `size` is an out parameter
+
+  uint8_t *p = buf;
+  int dfa_size = leb128_get(&p);
+
+  struct dstate *dstates[dfa_size];
+  for (int id = 0; id < dfa_size; id++)
+    dstates[id] = dstate_alloc(0);
+
+  for (int id = 0; id < dfa_size; id++) {
+    dstates[id]->accepting = *p >> 1 & 1;
+    dstates[id]->terminating = *p++ & 1;
+    for (int chr = 0; chr < 256;) {
+      int len = *p++;
+      struct dstate *target = dstates[leb128_get(&p)];
+      do // run length
+        dstates[id]->transitions[chr++] = target;
+      while (len--);
+    }
+
+    if (id != 0)
+      dstates[id - 1]->next = dstates[id];
+  }
+
+  *size = p - buf;
+  return *dstates;
+}
+
 void dfa_dump(struct dstate *dfa) {
   (void)dfa_get_size(dfa);
 
@@ -717,7 +797,7 @@ struct nfa ltre_fixed_string(char *string) {
     nfa.final = nstate_alloc();
     initial->next = nfa.final;
     initial->target = nfa.final;
-    bitset_set(initial->label, *string);
+    bitset_set(initial->label, (uint8_t)*string);
   }
 
   return nfa;
@@ -740,8 +820,8 @@ void ltre_ignorecase(struct nfa *nfa) {
   for (struct nstate *nstate = nfa->initial; nstate; nstate = nstate->next) {
     for (int chr = 0; chr <= 256; chr++) {
       if (bitset_get(nstate->label, chr)) {
-        bitset_set(nstate->label, tolower(chr));
-        bitset_set(nstate->label, toupper(chr));
+        bitset_set(nstate->label, (uint8_t)tolower(chr));
+        bitset_set(nstate->label, (uint8_t)toupper(chr));
       }
     }
   }
@@ -834,10 +914,10 @@ struct dstate *ltre_compile(struct nfa nfa) {
 
   // flag indistinguishable states. a pair of states is indistinguishable if and
   // only if both states have the same `accepting` value and their transitions
-  // are equal up to indistinguishability. to avoid having to deal with cycles,
-  // we default to all states being indistinguishable then iteratively rule out
-  // the ones that aren't. we store state distinguishability information in a
-  // symmetric matrix condensed using bitsets
+  // are equal up to target state indistinguishability. to avoid dealing with
+  // cycles, we default to all states being indistinguishable then iteratively
+  // rule out the ones that aren't. we store state distinguishability
+  // information in a symmetric matrix condensed using bitsets
   uint8_t dis[dfa_size][(dfa_size + 7) / 8]; // ceil
   memset(dis, 0x00, sizeof(dis));
   for (bool done = false; (done = !done);)
@@ -853,7 +933,9 @@ struct dstate *ltre_compile(struct nfa nfa) {
               ds1->terminating = ds2->terminating = false, done = false;
             }
 
-  // minimize DFA by merging indistinguishable states
+  // minimize the DFA by merging indistinguishable states. no need to prune
+  // unreachable states because the powerset construction yields a DFA with
+  // no unreachable states
   for (struct dstate *ds1 = dfa; ds1; ds1 = ds1->next) {
     for (struct dstate *prev = ds1; prev && prev->next; prev = prev->next) {
     redo:;
