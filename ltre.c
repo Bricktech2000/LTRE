@@ -980,9 +980,9 @@ bool ltre_matches(struct dstate *dfa, uint8_t *input) {
 
 bool ltre_matches_lazy(struct dstate **dfap, struct nfa nfa, uint8_t *input) {
   // Thompson's algorithm. lazily create new DFA states as we need them. cached
-  // DFA states are stored in `*dfap`. call initially with an empty cache useng
-  // `*dfap == NULL`, and make sure to `dfa_free(*dfap)` when finished with this
-  // NFA
+  // DFA states are stored in `*dfap`. call initially with an empty cache using
+  // `*dfap == NULL`, and make sure to `dfa_free(*dfap)` when finished with
+  // this NFA
 
   int nfa_size = nfa_get_size(nfa);
   struct nstate *nstates[nfa_size];
