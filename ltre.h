@@ -13,7 +13,7 @@ struct nfa {
   struct nstate *final;
   // NFA complementation is performed lazily by flipping this flag, often saving
   // us the trip through the compile pipeline. when this NFA is eventually
-  // compiled into a DFA by `ltre_compile`, this flag will be read by `dfa_walk`
+  // compiled into a DFA by `ltre_compile`, this flag will be read by `dfa_step`
   // when marking accepting states in
   bool complemented;
 };

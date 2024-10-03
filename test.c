@@ -382,4 +382,32 @@ int main(void) {
   test(PRINTF_FMT, "%c%s", true, .quick = true);
   test(PRINTF_FMT, "%u + %d", true, .quick = true);
   test(PRINTF_FMT, "%d:", true, .quick = true);
+  // ISO/IEC 9899:TC3, $6.4.1 'Keywords', $6.4.2 'Identifiers' and $6.4.3
+  // 'Universal character names'. does not uphold $6.4.3 paragraph 2
+#define KEYWORD                                                                \
+  "(auto|break|case|char|const|continue|default|do|double|else|enum|extern|"   \
+  "float|for|goto|if|inline|int|long|register|restrict|return|short|signed|"   \
+  "sizeof|static|struct|switch|typedef|union|unsigned|void|volatile|while|"    \
+  "_Bool|_Complex|_Imaginary)"
+#define HEX_QUAD "[0-9a-fA-F]{4}"
+#define IDENTIFIER                                                             \
+  "(\\w|\\\\u" HEX_QUAD "|\\\\U" HEX_QUAD HEX_QUAD ")*&~\\d.*&~" KEYWORD
+  test(IDENTIFIER, "_", true);
+  test(IDENTIFIER, "_foo", true);
+  test(IDENTIFIER, "_Bool", false);
+  test(IDENTIFIER, "a1", true);
+  test(IDENTIFIER, "5b", false);
+  test(IDENTIFIER, "if", false);
+  test(IDENTIFIER, "ifa", true);
+  test(IDENTIFIER, "bif", true);
+  test(IDENTIFIER, "if2", true);
+  test(IDENTIFIER, "1if", false);
+  test(IDENTIFIER, "\\u12", false);
+  test(IDENTIFIER, "\\u1A2b", true);
+  test(IDENTIFIER, "\\u1234", true);
+  test(IDENTIFIER, "\\u123x", false);
+  test(IDENTIFIER, "\\u1234x", true);
+  test(IDENTIFIER, "\\U12345678", true);
+  test(IDENTIFIER, "\\U1234567y", false);
+  test(IDENTIFIER, "\\U12345678y", true);
 }

@@ -828,7 +828,7 @@ void ltre_ignorecase(struct nfa *nfa) {
 }
 
 void ltre_complement(struct nfa *nfa) {
-  // complement accepted language. `dfa_walk` will read this flag when marking
+  // complement accepted language. `dfa_step` will read this flag when marking
   // accepting states
   nfa->complemented = !nfa->complemented;
 }
