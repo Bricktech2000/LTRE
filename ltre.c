@@ -266,11 +266,12 @@ uint8_t *dfa_serialize(struct dstate *dfa, size_t *size) {
   leb128_put(&p, dfa_size);
 
   for (struct dstate *dstate = dfa; dstate; dstate = dstate->next) {
-    // ensure buffer large enough for worst case. worst case is typically
-    // around 500 bytes larger than best case, so this is not too wasteful
-    // <accepting_terminating> + 256 * (<run_length> + <leb128(dfa_size)>)
-    uint8_t *new = realloc(buf, (p - buf) + 1 + 256 * (1 + ceil_log128));
-    p = p - buf + new, buf = new;
+    // ensure buffer large enough for worst case. worst case is typically around
+    // 500 bytes larger than best case, so this is not too wasteful.
+    ptrdiff_t len = p - buf;
+    // len + <accepting_terminating> + 256 * (<run_length> + <leb128(dfa_size)>)
+    uint8_t *new = realloc(buf, len + 1 + 256 * (1 + ceil_log128));
+    buf = new, p = new + len;
 
     *p++ = dstate->accepting << 1 | dstate->terminating;
     for (int chr = 0; chr < 256;) {
