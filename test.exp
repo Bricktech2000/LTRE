@@ -1,0 +1,30 @@
+01 bar
+03 bar
+05 bar
+06 BAZ
+07 foo
+09 foo
+13 foo
+14 bar
+15 BAZ
+19 -W
+20 -W
+22 a+
+23 A+
+1:24 ab
+2:cd
+<stdin>:1:25 ab
+<stdin>:2:cd
+3
+2
+3
+3
+0
+diff test.exp test.act
+32 diff	
+diff test.exp test.act
+diff test.exp test.act
+33 diff	
+2
+test.sh:37:diff test.exp test.act
+<stdin>:1:35 diff	

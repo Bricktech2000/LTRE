@@ -32,6 +32,7 @@ To build and run the minimal search tool:
 
 ```bash
 make ltrep
+sh test.sh # should have no output
 bin/ltrep -h # displays usage
 bin/ltrep '"(^[\\"]|\\<>)*"' ltrep.c ltre.c
 ```
