@@ -921,18 +921,19 @@ struct dstate *ltre_compile(struct nfa nfa) {
   // information in a symmetric matrix condensed using bitsets
   uint8_t dis[dfa_size][(dfa_size + 7) / 8]; // ceil
   memset(dis, 0x00, sizeof(dis));
+#define ARE_DIS(id1, id2) bitset_get(dis[id1], id2)
+#define MAKE_DIS(id1, id2) bitset_set(dis[id1], id2), bitset_set(dis[id2], id1)
+  for (struct dstate *ds1 = dfa; ds1; ds1 = ds1->next)
+    for (struct dstate *ds2 = ds1->next; ds2; ds2 = ds2->next)
+      if (ds1->accepting != ds2->accepting)
+        MAKE_DIS(ds1->id, ds2->id);
   for (bool done = false; (done = !done);)
     for (struct dstate *ds1 = dfa; ds1; ds1 = ds1->next)
-      for (struct dstate *ds2 = ds1; ds2; ds2 = ds2->next)
-        if (!bitset_get(dis[ds1->id], ds2->id))
+      for (struct dstate *ds2 = ds1->next; ds2; ds2 = ds2->next)
+        if (!ARE_DIS(ds1->id, ds2->id))
           for (int chr = 0; chr < 256; chr++)
-            if (ds1->accepting != ds2->accepting ||
-                bitset_get(dis[ds1->transitions[chr]->id],
-                           ds2->transitions[chr]->id)) {
-              bitset_set(dis[ds1->id], ds2->id);
-              bitset_set(dis[ds2->id], ds1->id);
-              ds1->terminating = ds2->terminating = false, done = false;
-            }
+            if (ARE_DIS(ds1->transitions[chr]->id, ds2->transitions[chr]->id))
+              MAKE_DIS(ds1->id, ds2->id), done = false;
 
   // minimize the DFA by merging indistinguishable states. no need to prune
   // unreachable states because the powerset construction yields a DFA with
@@ -941,7 +942,7 @@ struct dstate *ltre_compile(struct nfa nfa) {
     for (struct dstate *prev = ds1; prev && prev->next; prev = prev->next) {
     redo:;
       struct dstate *ds2 = prev->next;
-      if (bitset_get(dis[ds1->id], ds2->id))
+      if (ARE_DIS(ds1->id, ds2->id))
         continue;
       // states are indistinguishable. merge them
       for (struct dstate *dstate = dfa; dstate; dstate = dstate->next)
