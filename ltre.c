@@ -927,7 +927,7 @@ struct dstate *ltre_compile(struct nfa nfa) {
     for (struct dstate *ds2 = ds1->next; ds2; ds2 = ds2->next)
       if (ds1->accepting != ds2->accepting)
         MAKE_DIS(ds1->id, ds2->id);
-  for (bool done = false; (done = !done);)
+  for (bool done = false; done = !done;)
     for (struct dstate *ds1 = dfa; ds1; ds1 = ds1->next)
       for (struct dstate *ds2 = ds1->next; ds2; ds2 = ds2->next)
         if (!ARE_DIS(ds1->id, ds2->id))
@@ -959,7 +959,7 @@ struct dstate *ltre_compile(struct nfa nfa) {
     // always or never leads to an accepting state. since `ds1` is now
     // distinguishable from all other states, it is terminating if and only if
     // all its transitions point to itself because, by definition, no other
-    // state accepts the same set of words as it does (either none or all)
+    // state accepts the same set of words as it does (either all or none)
     ds1->terminating = true;
     for (int chr = 0; chr < 256; chr++)
       if (ds1->transitions[chr] != ds1)
