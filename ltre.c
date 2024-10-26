@@ -819,10 +819,10 @@ void ltre_ignorecase(struct nfa *nfa) {
   // transition contains, make it also contain its swapped-case counterpart
   nfa_uncomplement(nfa);
   for (struct nstate *nstate = nfa->initial; nstate; nstate = nstate->next) {
-    for (int chr = 0; chr <= 256; chr++) {
+    for (int chr = 0; chr < 256; chr++) {
       if (bitset_get(nstate->label, chr)) {
-        bitset_set(nstate->label, (uint8_t)tolower(chr));
-        bitset_set(nstate->label, (uint8_t)toupper(chr));
+        bitset_set(nstate->label, tolower(chr));
+        bitset_set(nstate->label, toupper(chr));
       }
     }
   }

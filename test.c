@@ -74,9 +74,13 @@ int main(void) {
   test("(a*)*c", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", false);
   test("(x+x+)+y", "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", false);
 
-  // exponential state blowout
+  // determinization state blowout
   test("[01]*1[01]{8}", "11011100011100", true, .quick = true);
   test("[01]*1[01]{8}", "01010010010010", false, .quick = true);
+
+  // powerset construction state blowout
+  test(".*0.*|.*1.*|.*2.*|.*3.*|.*4.*|.*5.*", "", false);
+  test(".*0.*|.*1.*|.*2.*|.*3.*|.*4.*|.*5.*", "123", true);
 
   // potential edge cases
   test("abba", "abba", true);
