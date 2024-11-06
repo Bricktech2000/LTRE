@@ -115,7 +115,8 @@ static int nfa_get_size(struct nfa nfa) {
   // also populates `nstate.id` with unique identifiers
   int nfa_size = 0;
   for (struct nstate *nstate = nfa.initial; nstate; nstate = nstate->next)
-    nstate->id = nfa_size++;
+    if ((nstate->id = nfa_size++) == INT_MAX)
+      abort();
   return nfa_size;
 }
 
@@ -232,7 +233,8 @@ static int dfa_get_size(struct dstate *dfa) {
   // also populates `dstate.id` with unique identifiers
   int dfa_size = 0;
   for (struct dstate *dstate = dfa; dstate; dstate = dstate->next)
-    dstate->id = dfa_size++;
+    if ((dstate->id = dfa_size++) == INT_MAX)
+      abort();
   return dfa_size;
 }
 
@@ -358,9 +360,17 @@ static unsigned parse_natural(char **regex, char **error) {
     return 0;
   }
 
-  unsigned natural = 0; // may wrap around
-  for (; isdigit(**regex); ++*regex)
-    natural *= 10, natural += **regex - '0';
+  unsigned natural = 0;
+  for (; isdigit(**regex); ++*regex) {
+    int digit = **regex - '0';
+
+    if (natural > UINT_MAX / 10 || natural * 10 > UINT_MAX - digit) {
+      *error = "natural number overflow";
+      return UINT_MAX; // indicate overflow condition
+    }
+
+    natural *= 10, natural += digit;
+  }
   return natural;
 }
 
@@ -647,15 +657,22 @@ static struct nfa parse_factor(char **regex, char **error) {
     ++*regex;
     nfa_uncomplement(&atom);
     unsigned min = parse_natural(regex, error);
-    if (*error)
+    if (*error && min == UINT_MAX) { // overflow condition
+      nfa_free(atom);
+      return (struct nfa){NULL};
+    } else if (*error)
       min = 0, *error = NULL;
 
     unsigned max = min;
+    bool max_unbounded = false;
     if (**regex == ',') {
       ++*regex;
       max = parse_natural(regex, error);
-      if (*error)
-        max = -1, *error = NULL;
+      if (*error && max == UINT_MAX) { // overflow condition
+        nfa_free(atom);
+        return (struct nfa){NULL};
+      } else if (*error)
+        max_unbounded = true, *error = NULL;
     }
 
     if (**regex != '}') {
@@ -665,7 +682,7 @@ static struct nfa parse_factor(char **regex, char **error) {
     }
     ++*regex;
 
-    if (min > max) {
+    if (min > max && !max_unbounded) {
       *regex = last_regex;
       *error = "misbounded quantifier";
       nfa_free(atom);
@@ -682,11 +699,10 @@ static struct nfa parse_factor(char **regex, char **error) {
     //                       <---
     // -->...(atom)(atom)-->(atom)-->O-->
     //                   ----------->
-    unsigned ncopies = max == -1 ? min + 1 : max;
-    for (unsigned i = 0; i < ncopies; i++) {
+    for (unsigned i = 0; max_unbounded ? i <= min : i < max; i++) {
       struct nfa clone = nfa_clone(atom);
       if (i >= min) {
-        if (max == -1) {
+        if (max_unbounded) {
           clone.final->epsilon1 = clone.initial;
           nfa_pad_initial(&clone), nfa_pad_final(&clone);
         }
@@ -694,6 +710,11 @@ static struct nfa parse_factor(char **regex, char **error) {
       }
 
       nfa_concat(&atoms, clone);
+
+      // needed for when `min == UINT_MAX && max_unbounded`. this isn't a bodge;
+      // the correct number of copies will have been made by the time we break
+      if (i == UINT_MAX)
+        break;
     }
 
     nfa_free(atom);

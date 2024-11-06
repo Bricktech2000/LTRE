@@ -208,6 +208,11 @@ int main(void) {
   test("a?*", .errors = true);
   test("a?+", .errors = true);
   test("a??", .errors = true);
+#define NAT_OVF "9999999999999999999999999999999999999999"
+  test("a{" NAT_OVF "}", .errors = true);
+  test("a{" NAT_OVF ",}", .errors = true);
+  test("a{," NAT_OVF "}", .errors = true);
+  test("a{" NAT_OVF "," NAT_OVF "}", .errors = true);
 
   // nonstandard features
   test("^a", "z", true);
