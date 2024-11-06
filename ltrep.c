@@ -1,4 +1,5 @@
 #include "ltre.h"
+#include <ctype.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,15 +14,16 @@ struct dstate {
   bool terminating;
 };
 
-const char *opts = "vxiFnHch";
+// `-S` is dealt with separately in `parse_args`
+const char *opts = "v xpisF nNHIc h ";
 struct args {
   struct {
     bool invert; // -v
-    bool full;   // -x
-    bool ignore; // -i
+    bool full;   // -x/-p
+    bool ignore; // -i/-s
     bool fixed;  // -F
-    bool lineno; // -n
-    bool file;   // -H
+    bool lineno; // -n/-N
+    bool file;   // -H/-I
     bool count;  // -c
     bool help;   // -h
   } opts;
@@ -36,14 +38,16 @@ struct args {
   "  ltrep [options...] [--] <regex> [files...]\n"
 #define OPTS                                                                   \
   "Options:\n"                                                                 \
-  "  -v  invert match; print non-matching lines\n"                             \
-  "  -x  full match; match against whole lines\n"                              \
-  "  -i  ignore case; match case-insensitively\n"                              \
-  "  -F  interpret the regex as a fixed string\n"                              \
-  "  -n  prefix matching lines with line numbers\n"                            \
-  "  -H  prefix matching lines with file names\n"                              \
-  "  -c  only print a count of matching lines\n"                               \
-  "  -h  display this help message and exit\n"                                 \
+  "  -v     invert match; print non-matching lines\n"                          \
+  "  -x/-p  full match; match against whole lines\n"                           \
+  "  -i/-s  ignore case; match case-insensitively\n"                           \
+  "  -S     smart case; set '-i' if regex lowercase\n"                         \
+  "  -F     interpret the regex as a fixed string\n"                           \
+  "  -n/-N  prefix matching lines with line numbers\n"                         \
+  "  -H/-I  prefix matching lines with file names\n"                           \
+  "  -c     only print a count of matching lines\n"                            \
+  "  -h     display this help message and exit\n"                              \
+  "Options '-i/-s' and '-S' override eachother.\n"                             \
   "A '--' is needed when <regex> begins in '-'.\n"                             \
   "A file of '-' denotes standard input. If no\n"                              \
   "files are provided, read from standard input.\n"
@@ -51,6 +55,7 @@ struct args {
 
 struct args parse_args(char **argv) {
   struct args args = {0};
+  bool smartcase = false; // -S
 
   if (!*++argv)
     fputs(DESC HELP, stdout), exit(EXIT_FAILURE);
@@ -58,11 +63,16 @@ struct args parse_args(char **argv) {
   for (; *argv && **argv == '-'; argv++) {
     if (strcmp(*argv, "--") == 0 && argv++)
       break;
+
     for (char *p, *opt = *argv + 1; *opt; opt++) {
-      if (p = strchr(opts, *opt))
-        (&args.opts.invert)[p - opts] = true;
+      if (*opt == 'S')
+        smartcase = true;
+      else if ((p = strchr(opts, *opt)) && *opt != ' ')
+        ((bool *)&args.opts)[p - opts >> 1] = !(p - opts & 1);
       else
         printf(INV HELP, *opt == '-' ? -1 : 1, opt), exit(EXIT_FAILURE);
+
+      smartcase &= *opt != 'i' && *opt != 's'; // `-i/-s` override `-S`
     }
   }
 
@@ -73,6 +83,15 @@ struct args parse_args(char **argv) {
     fputs(USAGE HELP, stdout), exit(EXIT_FAILURE);
   args.regex = *argv;
   args.files = ++argv;
+
+  if (smartcase) {
+    // not trying to be clever here. /\D/ and /\x6A/, for instance, are treated
+    // as uppercase and cause matches to become case-sensitive. probably not
+    // much of an issue because one could write /^\d/ and /\x6a/ instead
+    args.opts.ignore = true; // `-S` overrides `-i/-s`
+    for (char *c = args.regex; *c; c++)
+      args.opts.ignore &= !isupper(*c);
+  }
 
   return args;
 }
@@ -91,9 +110,9 @@ int main(int argc, char **argv) {
   // language, but swapping `ltre_partial` and `ltre_complement` or swapping
   // `ltre_ignorecase` and `ltre_complement` would. we perform `ltre_complement`
   // last to preserve that:
-  // - `ltrep -v` means _does not contain_
-  // - `ltrep -vi` means _does not contain any case variation of_
-  // - `ltrep -vxi` means _is not a case variation of_
+  // - `ltrep -x -vp` means _does not contain_
+  // - `ltrep -x -vi` means _is not a case variation of_
+  // - `ltrep -x -vpi` means _does not contain any case variation of_
   if (!args.opts.full)
     ltre_partial(&nfa);
   if (args.opts.ignore)
@@ -106,18 +125,20 @@ int main(int argc, char **argv) {
   int count = 0;
 
 #define OUTPUT_IF(COND)                                                        \
-  lineno++;                                                                    \
-  if (COND) {                                                                  \
+  do {                                                                         \
+    lineno++;                                                                  \
+    if (!(COND))                                                               \
+      break;                                                                   \
     count++;                                                                   \
     if (args.opts.count)                                                       \
-      continue;                                                                \
+      break;                                                                   \
     if (args.opts.file)                                                        \
       printf("%s:", *file);                                                    \
     if (args.opts.lineno)                                                      \
       printf("%d:", lineno);                                                   \
     fwrite(line, sizeof(uint8_t), nl - line, stdout);                          \
     fputc('\n', stdout);                                                       \
-  }
+  } while (0)
 
   if (!*args.files) {
   read_stdin:;
