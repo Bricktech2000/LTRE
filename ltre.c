@@ -923,57 +923,65 @@ struct dstate *ltre_compile(struct nfa nfa) {
   for (struct nstate *nstate = nfa.initial; nstate; nstate = nstate->next)
     nstates[nstate->id] = nstate;
 
-  struct dstate *dfa = NULL;
-  dfa_step(&dfa, NULL, 0, nfa, nfa_size, nstates);
-
   // construct new DFA states as we're iterating over them and patching
   // transitions, starting from the epsilon-closure of the NFA's initial state
+  struct dstate *dfa = NULL;
+  dfa_step(&dfa, NULL, 0, nfa, nfa_size, nstates);
   for (struct dstate *dstate = dfa; dstate; dstate = dstate->next)
     for (int chr = 0; chr < 256; chr++)
       dfa_step(&dfa, dstate, chr, nfa, nfa_size, nstates);
 
   int dfa_size = dfa_get_size(dfa);
+  struct dstate *dstates[dfa_size];
+  for (struct dstate *dstate = dfa; dstate; dstate = dstate->next)
+    dstates[dstate->id] = dstate;
+
+  // store distinguishability data in a symmetric matrix condensed using bitsets
+  uint8_t dis[dfa_size][(dfa_size + 7) / 8]; // ceil
+  memset(dis, 0x00, sizeof(dis));
+#define ARE_DIS(id1, id2) bitset_get(dis[id1], id2)
+#define MAKE_DIS(id1, id2) bitset_set(dis[id1], id2), bitset_set(dis[id2], id1)
 
   // flag indistinguishable states. a pair of states is indistinguishable if and
   // only if both states have the same `accepting` value and their transitions
   // are equal up to target state indistinguishability. to avoid dealing with
   // cycles, we default to all states being indistinguishable then iteratively
-  // rule out the ones that aren't. we store state distinguishability
-  // information in a symmetric matrix condensed using bitsets
-  uint8_t dis[dfa_size][(dfa_size + 7) / 8]; // ceil
-  memset(dis, 0x00, sizeof(dis));
-#define ARE_DIS(id1, id2) bitset_get(dis[id1], id2)
-#define MAKE_DIS(id1, id2) bitset_set(dis[id1], id2), bitset_set(dis[id2], id1)
+  // rule out the ones that aren't.
   for (struct dstate *ds1 = dfa; ds1; ds1 = ds1->next)
     for (struct dstate *ds2 = ds1->next; ds2; ds2 = ds2->next)
       if (ds1->accepting != ds2->accepting)
         MAKE_DIS(ds1->id, ds2->id);
   for (bool done = false; done = !done;)
-    for (struct dstate *ds1 = dfa; ds1; ds1 = ds1->next)
-      for (struct dstate *ds2 = ds1->next; ds2; ds2 = ds2->next)
-        if (!ARE_DIS(ds1->id, ds2->id))
+    for (int id1 = 0; id1 < dfa_size; id1++)
+      for (int id2 = id1 + 1; id2 < dfa_size; id2++)
+        if (!ARE_DIS(id1, id2))
           for (int chr = 0; chr < 256; chr++)
-            if (ARE_DIS(ds1->transitions[chr]->id, ds2->transitions[chr]->id))
-              MAKE_DIS(ds1->id, ds2->id), done = false;
+            // use irreflexivity of distinguishability as a cheap precheck
+            if (dstates[id1]->transitions[chr] !=
+                dstates[id2]->transitions[chr])
+              if (ARE_DIS(dstates[id1]->transitions[chr]->id,
+                          dstates[id2]->transitions[chr]->id)) {
+                MAKE_DIS(id1, id2), done = false;
+                break;
+              }
 
   // minimize the DFA by merging indistinguishable states. no need to prune
   // unreachable states because the powerset construction yields a DFA with
   // no unreachable states
   for (struct dstate *ds1 = dfa; ds1; ds1 = ds1->next) {
-    for (struct dstate *prev = ds1; prev && prev->next; prev = prev->next) {
-    redo:;
-      struct dstate *ds2 = prev->next;
-      if (ARE_DIS(ds1->id, ds2->id))
-        continue;
-      // states are indistinguishable. merge them
-      for (struct dstate *dstate = dfa; dstate; dstate = dstate->next)
-        for (int chr = 0; chr < 256; chr++)
-          if (dstate->transitions[chr] == ds2)
-            dstate->transitions[chr] = ds1;
-      prev->next = ds2->next;
-      free(ds2);
-      if (prev->next)
-        goto redo;
+    for (struct dstate *prev = ds1; prev; prev = prev->next) {
+      for (struct dstate *ds2; ds2 = prev->next;) {
+        if (ARE_DIS(ds1->id, ds2->id))
+          break;
+
+        // states are indistinguishable. merge them
+        for (struct dstate *dstate = dfa; dstate; dstate = dstate->next)
+          for (int chr = 0; chr < 256; chr++)
+            if (dstate->transitions[chr] == ds2)
+              dstate->transitions[chr] = ds1;
+
+        prev->next = ds2->next, free(ds2);
+      }
     }
 
     // flag "terminating" states. a terminating state is a state which either
