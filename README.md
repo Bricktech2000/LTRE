@@ -57,7 +57,7 @@ See [grammar.bnf](grammar.bnf) for the regular expression grammar specification.
 - `.` does not match newlines; to match any character including newlines, use `<>`.
 - The empty regular expression matches the empty word; to match no word, use `[]`.
 - The lower bound of bounded repetitions may be omitted and defaults to `0`.
-- Regular expressions can be intersected with infix `&` and complemented with prefix `~`.
+- Regular expressions can be intersected with infix `&` and complemented with prefix `~`.
 
 Supported features are as follows:
 
