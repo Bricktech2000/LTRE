@@ -57,8 +57,8 @@ echo -e 48 'bar' | bin/ltrep -Si 'A' >> test.act
 echo -e 49 'bar' | bin/ltrep -iS 'A' >> test.act
 echo -e 50 'bar' | bin/ltrep -nN 'a' >> test.act
 echo -e 51 'bar' | bin/ltrep -Nn 'a' >> test.act
-echo -e 52 'bar' | bin/ltrep -HI 'a' >> test.act
-echo -e 53 'bar' | bin/ltrep -IH 'a' >> test.act
+echo -e 52 'bar' | bin/ltrep -Hh 'a' >> test.act
+echo -e 53 'bar' | bin/ltrep -hH 'a' >> test.act
 
 diff test.exp test.act
 # cp test.act test.exp # for updating the test suite

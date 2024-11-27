@@ -20,15 +20,15 @@
 <stdin>:2:cd
 3
 2
-3
-3
-0
+3:3
+<stdin>:3
 diff test.exp test.act
 38 diff	
 diff test.exp test.act
 diff test.exp test.act
 39 diff	
-2
+1
+1
 test.sh:63:diff test.exp test.act
 <stdin>:1:41 diff	
 42 bar

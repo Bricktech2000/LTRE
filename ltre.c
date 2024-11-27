@@ -1,7 +1,6 @@
 #include "ltre.h"
 #include <ctype.h>
 #include <limits.h>
-#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -870,22 +869,22 @@ static void epsilon_closure(struct nstate *nstate, uint8_t bitset[]) {
 static void dfa_step(struct dstate **dfap, struct dstate *dstate, uint8_t chr,
                      struct nfa nfa, int nfa_size, struct nstate *nstates[]) {
   // step the DFA `*dfap` starting from state `dstate` by consuming input
-  // character `chr` according to the NFA `nfa`. `nstates` shall expose the
-  // states of the NFA `nfa` as an array of state pointers of length `nfa_size`.
-  // this routine creates new DFA states as needed. call initially with `dstate
-  // == NULL` to create a DFA state corresponding to the epsilon-closure of the
-  // NFA's initial state
+  // character `chr` in lock step according to the NFA `nfa`. `nstates` shall
+  // expose the states of the NFA `nfa` as an array of state pointers of length
+  // `nfa_size`. this routine creates new DFA states as needed. call initially
+  // with `dstate == NULL` to create a DFA state corresponding to the
+  // epsilon-closure of the NFA's initial state
 
   int bitset_size = (nfa_size + 7) / 8; // ceil
   uint8_t bitset_union[bitset_size];
   memset(bitset_union, 0x00, bitset_size);
 
   if (dstate) {
-    // compute the "superposition" of NFA states reachable by consuming `chr`.
-    // using the array of state pointers `nstates` speeds up this hot loop by
-    // 2.5x over iterating through the states linked list using `nstate->next`,
-    // probably because it helps out the prefetches and breaks the memory load
-    // dependency chain
+    // compute the "superposition" of NFA states reachable by consuming `chr` in
+    // lock step. using the array of state pointers `nstates` speeds up this hot
+    // loop by 2.5x over iterating through the states linked list using
+    // `nstate->next`, probably because it helps out the prefetcher and breaks
+    // the memory load dependency chain
     for (int id = 0; id < nfa_size; id++)
       if (bitset_get(dstate->bitset, id) && bitset_get(nstates[id]->label, chr))
         epsilon_closure(nstates[id]->target, bitset_union);
@@ -1010,10 +1009,10 @@ bool ltre_matches(struct dstate *dfa, uint8_t *input) {
 }
 
 bool ltre_matches_lazy(struct dstate **dfap, struct nfa nfa, uint8_t *input) {
-  // Thompson's algorithm. lazily create new DFA states as we need them. cached
-  // DFA states are stored in `*dfap`. call initially with an empty cache using
-  // `*dfap == NULL`, and make sure to `dfa_free(*dfap)` when finished with
-  // this NFA
+  // Thompson's algorithm. lazily create new DFA states as we need them,
+  // marching the NFA in lock step. cached DFA states are stored in `*dfap`.
+  // call initially with an empty cache using `*dfap == NULL`, and make sure
+  // to `dfa_free(*dfap)` when finished with this NFA
 
   int nfa_size = nfa_get_size(nfa);
   struct nstate *nstates[nfa_size];
@@ -1025,7 +1024,7 @@ bool ltre_matches_lazy(struct dstate **dfap, struct nfa nfa, uint8_t *input) {
   // time linear in the input length :)
   struct dstate *dstate = *dfap;
   for (; *input; dstate = dstate->transitions[*input++])
-    if (!dstate->transitions[*input])
+    if (dstate->transitions[*input] == NULL)
       dfa_step(dfap, dstate, *input, nfa, nfa_size, nstates);
 
   return dstate->accepting;
