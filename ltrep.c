@@ -10,29 +10,41 @@
 // steal implementation details
 struct dstate {
   struct dstate *transitions[256];
-  bool accepting;
-  bool terminating;
+  bool accepting, terminating;
+};
+struct nstate {
+  uint8_t label[256 / 8];
+  struct nstate *target, *source;
 };
 
-// `-S` is dealt with separately in `parse_args`
-const char *opts = "v xpisF nNHhc l ";
+// '-S' is dealt with separately in `parse_args`
+const char *opts = "v xpisF HhnNb o c l ";
 struct args {
   struct {
-    bool invert; // -v
-    bool exact;  // -x/-p
-    bool ignore; // -i/-s
-    bool fixed;  // -F
-    bool lineno; // -n/-N
-    bool filehd; // -H/-h
-    bool count;  // -c
-    bool list;   // -l
+    bool invert;  // -v
+    bool exact;   // -x/-p
+    bool ignore;  // -i/-s
+    bool fixed;   // -F
+    bool filehd;  // -H/-h
+    bool lineno;  // -n/-N
+    bool byteoff; // -b
+    bool onlymat; // -o
+    bool count;   // -c
+    bool list;    // -l
   } opts;
   char *regex;  // <regex>
   char **files; // [files...]
 };
 
+// TODO test cases for -o -b
+// TODO test cases for interplay
+
 // TODO test cases for -l
 // TODO test cases for -l -n -H -c interplay
+
+// TODO add test:
+// & echo 'aabbaaabbb' | bin/ltrep -o 'b+'
+// bb
 
 #define VER "LTREP 0.1\n"
 #define DESC "LTREP --- print lines matching a regex\n"
@@ -48,10 +60,12 @@ struct args {
   "  -i/-s  ignore case; match case-insensitively\n"                           \
   "  -S     smart case; set '-i' if regex lowercase\n"                         \
   "  -F     interpret the regex as a fixed string\n"                           \
-  "  -n/-N  prefix matching lines with line numbers\n"                         \
   "  -H/-h  prefix matching lines with file names\n"                           \
+  "  -n/-N  prefix matching lines with line numbers\n"                         \
+  "  -b     prefix matching lines with byte offsets\n"                         \
+  "  -o     print only the matching part of a line\n"                          \
   "  -c     only print a count of matching lines\n"                            \
-  "  -l     only print names of files with matches\n"
+  "  -l     only print a list of files with matches\n"
 #define EXTRA                                                                  \
   "Options '-i/-s' and '-S' override eachother.\n"                             \
   "A '--' is needed when <regex> begins in '-'.\n"                             \
@@ -83,7 +97,7 @@ struct args parse_args(char **argv) {
       else
         printf(INV HELP, *opt == '-' ? -1 : 1, opt), exit(EXIT_FAILURE);
 
-      smartcase &= *opt != 'i' && *opt != 's'; // `-i/-s` override `-S`
+      smartcase &= *opt != 'i' && *opt != 's'; // '-i/-s' override '-S'
     }
   }
 
@@ -96,7 +110,7 @@ struct args parse_args(char **argv) {
     // not trying to be clever here. /\D/ and /\x6A/, for instance, are treated
     // as uppercase and cause matches to become case-sensitive. probably not
     // much of an issue because one could write /^\d/ and /\x6a/ instead
-    args.opts.ignore = true; // `-S` overrides `-i/-s`
+    args.opts.ignore = true; // '-S' overrides '-i/-s'
     for (char *c = args.regex; *c; c++)
       args.opts.ignore &= !isupper(*c);
   }
@@ -128,17 +142,51 @@ int main(int argc, char **argv) {
   if (args.opts.invert)
     ltre_complement(&nfa);
 
+  // `ltre_partial` effectively turns a regex /abc/ into a "partial match" regex
+  // /<>*abc<>*/. in terms of formal languages this is the natural thing to do,
+  // but the problem is we can't use it to extract match boundaries, which is
+  // required when '-o' is supplied. the solution is (to dangerously poke into
+  // LTRE's internal representation of NFAs) to construct:
+  // 1. a "reverse DFA" `rev_dfa` that matches /<>*cba/, which we run from the
+  //    end of a line to find the spots where a partial match can begin;
+  // 2. a "forward DFA" `fwd_dfa` that matches /abc/, which we run from the
+  //    beginning of a partial match to find the spots where it can end.
+  // by interpreting those "can"s in the right way, we guarantee leftmost-
+  // longest semantics for match boundary extraction
   struct dstate *dfa = ltre_compile(nfa);
+  struct dstate *rev_dfa = NULL, *fwd_dfa = NULL;
+  if (args.opts.onlymat && !args.opts.exact && !args.opts.count &&
+      !args.opts.list) {
+    nfa.initial->target->source = NULL, nfa.initial->target = NULL;
+    ltre_reverse(&nfa), rev_dfa = ltre_compile(nfa);
+    nfa.final->source->target = NULL, nfa.final->source = NULL;
+    ltre_reverse(&nfa), fwd_dfa = ltre_compile(nfa);
+  }
 
 #define OUTPUT_LINE                                                            \
   do {                                                                         \
     if (args.opts.count || args.opts.list)                                     \
       break;                                                                   \
+    uint8_t *p, *begin = line, *end = nl;                                      \
+    if (args.opts.onlymat && !args.opts.exact) {                               \
+      p = end; /* leftmost */                                                  \
+      for (struct dstate *dstate = rev_dfa; p > line;                          \
+           dstate = dstate->transitions[*--p])                                 \
+        if (dstate->accepting)                                                 \
+          begin = p;                                                           \
+      p = begin; /* longest */                                                 \
+      for (struct dstate *dstate = fwd_dfa; p < nl;                            \
+           dstate = dstate->transitions[*p++])                                 \
+        if (dstate->accepting)                                                 \
+          end = p;                                                             \
+    }                                                                          \
     if (args.opts.filehd)                                                      \
       printf("%s:", *file);                                                    \
     if (args.opts.lineno)                                                      \
-      printf("%d:", lineno);                                                   \
-    fwrite(line, sizeof(uint8_t), nl - line, stdout);                          \
+      printf("%zu:", lineno);                                                  \
+    if (args.opts.byteoff)                                                     \
+      printf("%zu:", begin - line + lineoff);                                  \
+    fwrite(begin, sizeof(uint8_t), end - begin, stdout);                       \
     fputc('\n', stdout);                                                       \
   } while (0)
 
@@ -151,9 +199,9 @@ int main(int argc, char **argv) {
     if (args.opts.filehd)                                                      \
       printf("%s:", *file);                                                    \
     if (args.opts.lineno)                                                      \
-      printf("%d:", lineno);                                                   \
+      printf("%zu:", lineno);                                                  \
     if (args.opts.count)                                                       \
-      printf("%d\n", count);                                                   \
+      printf("%zu\n", count);                                                  \
     else if (args.opts.list)                                                   \
       printf("%s\n", *file);                                                   \
   } while (0)
@@ -161,7 +209,7 @@ int main(int argc, char **argv) {
   if (!*args.files) {
   read_stdin:;
     char **file = &(char *){"<stdin>"}; // fun
-    int lineno = 0, count = 0;
+    size_t lineno = 0, count = 0, lineoff = 0;
     size_t len = 0, cap = 256;
     uint8_t *nl, *line = malloc(cap);
     while (fgets((char *)line + len, cap - len, stdin) != NULL) {
@@ -176,6 +224,7 @@ int main(int argc, char **argv) {
 
       if (lineno++, ltre_matches(dfa, line) && ++count)
         OUTPUT_LINE;
+      lineoff += nl - line + 1;
     }
 
     if (!feof(stdin))
@@ -184,7 +233,7 @@ int main(int argc, char **argv) {
 
     OUTPUT_FILE;
 
-    // clear EOF indicator in case a file of `-` is supplied more than once
+    // clear EOF indicator in case a file of '-' is supplied more than once
     clearerr(stdin);
   }
 
@@ -199,7 +248,7 @@ int main(int argc, char **argv) {
     uint8_t *data = mmap(0, len, PROT_READ, MAP_PRIVATE, fd, 0);
 
     // intertwine `ltre_matches` within walking the file for maximum performance
-    int lineno = 0, count = 0;
+    size_t lineno = 0, count = 0, lineoff = 0;
     struct dstate *dstate = dfa;
     uint8_t *nl = data, *line = data;
     for (; nl < data + len; line = ++nl) {
@@ -213,6 +262,7 @@ int main(int argc, char **argv) {
 
       if (lineno++, dstate->accepting && ++count)
         OUTPUT_LINE;
+      lineoff += nl - line + 1;
     }
 
     if (close(fd) == -1)
@@ -222,4 +272,5 @@ int main(int argc, char **argv) {
   }
 
   nfa_free(nfa), dfa_free(dfa);
+  dfa_free(rev_dfa), dfa_free(fwd_dfa);
 }

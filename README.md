@@ -7,8 +7,8 @@ _Finite automaton regular expression engine_
 LTRE is a regular expression library written in C99 that has no dependencies but the C standard library. It parses regular expressions into NFAs then compiles them down to minimal DFAs for linear-time matching. It also provides facilities for manipulating NFAs, for lazily constructing DFAs and for decompiling DFAs back into regular expressions.
 
 ```
-                             _
-                            | | ltre_partial, ltre_ignorecase, ltre_complement
+                ltre_partial _ ltre_ignorecase
+            ltre_complement | | ltre_reverse
                             | V
 (RE)-------ltre_parse----->(NFA)----ltre_compile--->(DFA)----ltre_serialize--->(BUF)
     ---ltre_fixed_string-->  |  <--ltre_uncompile---  |  <--ltre_deserialize---

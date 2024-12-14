@@ -11,6 +11,7 @@ struct test {
   bool partial;
   bool ignorecase;
   bool complement;
+  bool reverse;
   bool quick;
 };
 
@@ -42,6 +43,8 @@ void test(struct test args) {
     ltre_ignorecase(&nfa);
   if (args.complement)
     ltre_complement(&nfa);
+  if (args.reverse)
+    ltre_reverse(&nfa);
 
   // NFA -> DFA
   dfa_free(dfa), dfa = ltre_compile(nfa);
@@ -120,6 +123,7 @@ int main(void) {
   test("a+", "", false);
   test("(a+|)+", "aa", true);
   test("(a+|)+", "", true);
+  test("(a|b)?", "", true);
   test("(a|b)?", "a", true);
   test("(a|b)?", "b", true);
   test("x*|", "xx", true);
@@ -164,7 +168,7 @@ int main(void) {
   test("a{0}", "", true);
   test("a{0}", "a", false);
 
-  // partial, ignorecase, complement
+  // partial, ignorecase, complement, reverse
   test("", "", true, .partial = true);
   test("", "abc", true, .partial = true);
   test("b", "abc", true, .partial = true);
@@ -179,12 +183,17 @@ int main(void) {
   test("a", "a", false, .complement = true);
   test("ab*", "ac", true, .complement = true);
   test("ab*", "abb", false, .complement = true);
+  test("", "", true, .reverse = true);
+  test("abc", "abc", false, .reverse = true);
+  test("abc", "cba", true, .reverse = true);
+  test("a*b", "ba", true, .reverse = true);
+  test("a*b", "ab", false, .reverse = true);
 
   // decompilation edge cases
-  test("^aa*", "ba", true);
-  test("a-zz*", "abc", false);
-  test("\\x0a(0a)*", "\x0a", true);
-  test("\\x0aa*", "\x0a\x0a", false);
+  test("^aa*", "ba", true, .quick = false);
+  test("a-zz*", "abc", false, .quick = false);
+  test("\\x0a(0a)*", "\x0a", true, .quick = false);
+  test("\\x0aa*", "\x0a\x0a", false, .quick = false);
 
   // parse errors
   test("abc]", .errors = true);
