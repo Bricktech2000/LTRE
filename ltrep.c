@@ -252,10 +252,10 @@ int main(int argc, char **argv) {
     struct dstate *dstate = dfa;
     uint8_t *nl = data, *line = data;
     for (; nl < data + len; line = ++nl) {
-      for (dstate = dfa; !dstate->terminating && *nl != '\n' && nl < data + len;
-           nl++)
-        dstate = dstate->transitions[*nl];
-      if (*nl != '\n') {
+      for (dstate = dfa;
+           !dstate->terminating && nl < data + len && *nl != '\n';)
+        dstate = dstate->transitions[*nl++];
+      if (nl < data + len && *nl != '\n') {
         nl = memchr(nl, '\n', data + len - nl);
         nl = nl ? nl : data + len;
       }

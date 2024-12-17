@@ -22,7 +22,7 @@ void test(struct test args) {
   static struct dstate *dfa = NULL, *ldfa = NULL;
 
   if (dfa && strcmp(memo.regex, args.regex) == 0 &&
-      memcmp(&memo.errors, &args.errors, sizeof(bool[5])) == 0)
+      memcmp(&memo.errors, &args.errors, sizeof(bool[6])) == 0)
     goto check_matches;
   memo = args;
 

@@ -597,7 +597,7 @@ static void parse_symset(symset_t symset, char **regex, char **error) {
     end++; // open upper bound
     memset(symset, 0x00, sizeof(symset_t));
     uint8_t chr = begin;
-    do
+    do // character range wraparound
       bitset_set(symset, chr);
     while (++chr != end);
     goto process_complement;
