@@ -87,12 +87,19 @@ int main(void) {
 
   // potential edge cases
   test("abba", "abba", true);
+  test("ab|abba", "abba", true);
   test("[ab]+", "abba", true);
   test("[ab]+", "abc", false);
+  test(".", "abba", false);
   test(".*", "abba", true);
   test("(a|b+){3}", "abbba", true);
   test("(a|b+){3}", "abbab", false);
   test("\\x61\\+", "a+", true);
+  test("a*b+bc", "abbbbc", true);
+  test("zzz|b+c", "abbbbc", false);
+  test("zzz|ab+c", "abbbbc", true);
+  test("a+b|c", "abbbbc", false);
+  test("ab+|c", "abbbbc", false);
   test("", "", true);
   test("[]", "", false);
   test("[]*", "", true);
@@ -275,6 +282,9 @@ int main(void) {
   test("a-b*", "ab", true);
   test("a-a*", "ab", false);
   test("a-a*", "aa", true);
+  test("\\.-4+", "./01234", true);
+  test("5-\\?+", "56789:;<=>?", true);
+  test("\\(-\\++", "()*+", true);
   test("a{,2}", "", true);
   test("a{,2}", "a", true);
   test("a{,2}", "aa", true);
@@ -290,6 +300,15 @@ int main(void) {
   test("ab&cd", "", false);
   test("ab&cd", "ab", false);
   test("ab&cd", "cd", false);
+  test(".*a.*&...", "ab", false);
+  test(".*a.*&...", "abc", true);
+  test(".*a.*&...", "bcd", false);
+  test("a&b|c", "a", false);
+  test("a&b|c", "b", false);
+  test("a&b|c", "c", false);
+  test("a|b&c", "a", true);
+  test("a|b&c", "b", false);
+  test("a|b&c", "c", false);
   test("\\w+&~\\d+", "", false);
   test("\\w+&~\\d+", "abc", true);
   test("\\w+&~\\d+", "abc123", true);
@@ -312,6 +331,8 @@ int main(void) {
   test("[-]", .errors = true);
   test("-", .errors = true);
   test("a-", .errors = true);
+  test(".-a", .errors = true);
+  test("a-.", .errors = true);
   test("a*{}", .errors = true);
   test("a+{}", .errors = true);
   test("a?{}", .errors = true);
@@ -323,6 +344,7 @@ int main(void) {
   test("a{1 2}", .errors = true);
   test("a{1, 2}", .errors = true);
   test("a{a}", .errors = true);
+  test("~~a", .errors = true);
   test("a~b", .errors = true);
 
   // realistic regexes
@@ -336,15 +358,15 @@ int main(void) {
   // see also gcc-14/gcc/c-family/c-format.cc:713 'print_char_table'
   // and gcc-14/gcc/c-family/c-format.h:25 'enum format_lengths'
 #define FIELD_WIDTH "(\\*|1-90-9*)?"
-#define PRECISION "(\\.|\\.\\*|\\.1-90-9*)?"
-#define DI "[\\-\\+ 0]*" FIELD_WIDTH PRECISION "([hljzt]|hh|ll)?[di]"
-#define U "[\\-0]*" FIELD_WIDTH PRECISION "([hljzt]|hh|ll)?u"
-#define OX "[\\-#0]*" FIELD_WIDTH PRECISION "([hljzt]|hh|ll)?[oxX]"
+#define PRECISION "(\\.(\\*|1-90-9*)?)?"
+#define DI "[\\-\\+ 0]*" FIELD_WIDTH PRECISION "(hh|ll|[hljzt])?[di]"
+#define U "[\\-0]*" FIELD_WIDTH PRECISION "(hh|ll|[hljzt])?u"
+#define OX "[\\-#0]*" FIELD_WIDTH PRECISION "(hh|ll|[hljzt])?[oxX]"
 #define FEGA "[\\-\\+ #0]*" FIELD_WIDTH PRECISION "[lL]?[fFeEgGaA]"
 #define C "\\-*" FIELD_WIDTH "l?c"
 #define S "\\-*" FIELD_WIDTH PRECISION "l?s"
 #define P "\\-*" FIELD_WIDTH "p"
-#define N FIELD_WIDTH "([hljzt]|hh|ll)?n"
+#define N FIELD_WIDTH "(hh|ll|[hljzt])?n"
 #define CONV_SPEC "%(" DI "|" U "|" OX "|" FEGA "|" C "|" S "|" P "|" N "|%)"
   test(CONV_SPEC, "%", false);
   test(CONV_SPEC, "%*", false);
@@ -397,7 +419,8 @@ int main(void) {
   "_Bool|_Complex|_Imaginary)"
 #define HEX_QUAD "[0-9a-fA-F]{4}"
 #define IDENTIFIER                                                             \
-  "(\\w|\\\\u" HEX_QUAD "|\\\\U" HEX_QUAD HEX_QUAD ")*&~\\d.*&~" KEYWORD
+  "(\\w|\\\\u" HEX_QUAD "|\\\\U" HEX_QUAD HEX_QUAD ")+&~\\d.*&~" KEYWORD
+  test(IDENTIFIER, "", false);
   test(IDENTIFIER, "_", true);
   test(IDENTIFIER, "_foo", true);
   test(IDENTIFIER, "_Bool", false);
@@ -519,7 +542,7 @@ int main(void) {
   test(UTF8_CHAR_SOME, "\xed\xa0\x80", false); // d800, first surrogate
   test(UTF8_CHAR_SOME, "\xc0\x80", false);     // RFC ex. (overlong nul)
   test(UTF8_CHAR_ALL, "\x7f", true);
-  test(UTF8_CHAR_ALL, "\xF0\x9E\x84\x93", true);
+  test(UTF8_CHAR_ALL, "\xf0\x9e\x84\x93", true);
   test(UTF8_CHAR_ALL, "\x2f", true);               // solidus
   test(UTF8_CHAR_SOME, "\xc0\xaf", false);         // overlong solidus
   test(UTF8_CHAR_SOME, "\xe0\x80\xaf", false);     // overlong solidus

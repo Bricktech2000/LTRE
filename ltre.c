@@ -791,9 +791,9 @@ static struct nfa parse_regex(char **regex, char **error) {
   if (*error)
     return (struct nfa){NULL};
 
-  while (**regex == '|' || **regex == '&') {
+  if (**regex == '|' || **regex == '&') {
     bool intersect = *(*regex)++ == '&';
-    struct nfa alt = parse_term(regex, error);
+    struct nfa alt = parse_regex(regex, error);
     if (*error) {
       nfa_free(re);
       return (struct nfa){NULL};
