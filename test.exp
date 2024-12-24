@@ -1,41 +1,64 @@
-01 bar
-03 bar
-05 bar
+00 01 bar
+02 03 bar
+04 05 bar
 06 BAZ
 07 foo
-09 foo
-13 foo
+08 09 foo
+10 11 12 13 foo
 14 bar
 15 BAZ
-20 bar
+16 17 18 19 20 bar
 21 BAZ
-24 BAZ
+22 23 24 BAZ
 25 -W
 26 -W
-28 a+
+27 28 a+
 29 A+
-1:30 ab
+30 1:ab
 2:cd
-<stdin>:1:31 ab
+31 0:ab
+3:cd
+32 <stdin>:1:ab
 <stdin>:2:cd
-3
-2
-3:3
-<stdin>:3
+33 <stdin>:0:ab
+<stdin>:3:cd
+34 <stdin>:1:0:ab
+<stdin>:2:3:cd
+35 3
+36 2
+37 3:3
+38 3
+39 <stdin>:3
+40 41 <stdin>
+42 <stdin>
+43 3:<stdin>
+44 <stdin>
+45 <stdin>:<stdin>
+46 47 3
+48 2
+49 diff test.exp test.act
+50 diff	
 diff test.exp test.act
-38 diff	
-diff test.exp test.act
-diff test.exp test.act
-39 diff	
+51 diff test.exp test.act
+diff	
+52 1
 1
+53 test.sh
+<stdin>
+54 1
 1
-test.sh:63:diff test.exp test.act
-<stdin>:1:41 diff	
-42 bar
-45 BAR
-47 BAR
-48 bar
-50 bar
-1:51 bar
-52 bar
-<stdin>:53 bar
+55 test.sh:84:diff test.exp test.act
+<stdin>:1:diff	
+56 test.sh:5475:diff test.exp test.act
+<stdin>:0:diff	
+57 b
+58 bbb
+59 1:a
+60 bar
+61 62 63 BAR
+64 65 BAR
+66 bar
+67 68 bar
+69 1:bar
+70 bar
+71 <stdin>:bar

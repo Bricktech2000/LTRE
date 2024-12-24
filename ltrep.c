@@ -36,16 +36,6 @@ struct args {
   char **files; // [files...]
 };
 
-// TODO test cases for -o -b
-// TODO test cases for interplay
-
-// TODO test cases for -l
-// TODO test cases for -l -n -H -c interplay
-
-// TODO add test:
-// & echo 'aabbaaabbb' | bin/ltrep -o 'b+'
-// bb
-
 #define VER "LTREP 0.1\n"
 #define DESC "LTREP --- print lines matching a regex\n"
 #define HELP "Try 'ltrep -h' for more information.\n"
@@ -63,7 +53,7 @@ struct args {
   "  -H/-h  prefix matching lines with file names\n"                           \
   "  -n/-N  prefix matching lines with line numbers\n"                         \
   "  -b     prefix matching lines with byte offsets\n"                         \
-  "  -o     print only the matching part of a line\n"                          \
+  "  -o     print the matching part of a line only\n"                          \
   "  -c     only print a count of matching lines\n"                            \
   "  -l     only print a list of files with matches\n"
 #define EXTRA                                                                  \
