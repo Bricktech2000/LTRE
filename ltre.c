@@ -208,7 +208,7 @@ static void nfa_canonicalize(struct nfa *nfa) {
     return;
   struct dstate *dfa = ltre_compile(*nfa);
   struct nfa canonicalized = ltre_uncompile(dfa);
-  dfa_free(dfa), nfa_free(*nfa);
+  nfa_free(*nfa), dfa_free(dfa);
   memcpy(nfa, &canonicalized, sizeof(struct nfa));
 }
 
@@ -1094,6 +1094,43 @@ bool ltre_matches_lazy(struct dstate **dfap, struct nfa nfa, uint8_t *input) {
       dfa_step(dfap, dstate, *input, nfa, nfa_size, nstates);
 
   return dstate->accepting;
+}
+
+bool ltre_equivalent(struct dstate *dfa1, struct dstate *dfa2) {
+  // check whether `dfa1` and `dfa2` accept the same language. all DFAs in
+  // LTRE are minimal and minimal DFAs are unique up to renumbering, so we
+  // just have to check for a graph isomorphism that preserves the initial
+  // state, accepting states, and transitions
+
+  int dfa_size = dfa_get_size(dfa1);
+  if (dfa_size != dfa_get_size(dfa2))
+    return false;
+  struct dstate *map[dfa_size]; // mapping of states from `dfa1` to `dfa2`
+  memset(map, 0, sizeof(map)), map[dfa1->id] = dfa2;
+
+  // come up with a tentative mapping by following transitions from the initial
+  // states. the mapping will be nonesensical when the DFAs are not equivalent,
+  // but that doesn't matter as long as the mapping is an isomorphism when the
+  // DFAs actually are equivalent
+  for (struct dstate *dstate = dfa1; dstate; dstate = dstate->next)
+    for (int chr = 0; chr < 256; chr++)
+      map[dstate->transitions[chr]->id] = map[dstate->id]->transitions[chr];
+
+  // now, ensure our tentative mapping is an isomorphism
+  if (map[dfa1->id] != dfa2)
+    return false; // ininitial state not preserved
+  for (struct dstate *dstate = dfa1; dstate; dstate = dstate->next) {
+    if (map[dstate->id] == NULL)
+      return false; // mapping is not a bijection
+    if (dstate->accepting != map[dstate->id]->accepting)
+      return false; // accepting states not preserved
+    for (int chr = 0; chr < 256; chr++)
+      if (map[dstate->transitions[chr]->id] !=
+          map[dstate->id]->transitions[chr])
+        return false; // transitions not preserved
+  }
+
+  return true;
 }
 
 struct nfa ltre_uncompile(struct dstate *dfa) {

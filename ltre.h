@@ -32,3 +32,4 @@ struct nfa ltre_uncompile(struct dstate *dfa);
 char *ltre_decompile(struct dstate *dfa);
 bool ltre_matches(struct dstate *dfa, uint8_t *input);
 bool ltre_matches_lazy(struct dstate **dfap, struct nfa nfa, uint8_t *input);
+bool ltre_equivalent(struct dstate *dfa1, struct dstate *dfa2);

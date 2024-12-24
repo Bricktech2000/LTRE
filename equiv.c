@@ -13,18 +13,29 @@ int main(int argc, char *aegv[]) {
     }
     *nl = '\0', len = 0;
 
+    char *sep = memchr(line, '\t', nl - line);
+    if (sep == NULL) {
+      fprintf(stderr, "format error: could not find tab separator\n");
+      continue;
+    }
+    *sep = '\0';
+
     char *error = NULL, *loc = line;
-    struct nfa nfa = ltre_parse(&loc, &error);
+    struct nfa nfa1 = ltre_parse(&loc, &error);
+    if (error)
+      goto parse_error;
+    loc = sep + 1;
+    struct nfa nfa2 = ltre_parse(&loc, &error);
     if (error) {
+    parse_error:
       fprintf(stderr, "parse error: %s near '%.16s'\n", error, loc);
       continue;
     }
 
-    ltre_complement(&nfa);
-    struct dstate *dfa = ltre_compile(nfa);
-    char *re = ltre_decompile(dfa);
-    puts(re);
-    nfa_free(nfa), dfa_free(dfa), free(re);
+    struct dstate *dfa1 = ltre_compile(nfa1), *dfa2 = ltre_compile(nfa2);
+    puts(ltre_equivalent(dfa1, dfa2) ? "equivalent" : "not equivalent");
+
+    nfa_free(nfa1), nfa_free(nfa2), dfa_free(dfa1), dfa_free(dfa2);
   }
 
   if (!feof(stdin))
