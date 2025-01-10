@@ -163,9 +163,11 @@ static void nfa_concat(struct nfa *nfap, struct nfa nfa) {
   // nothing. performs a "visual" concatenation and therefore does not take into
   // account the `nfa.complemented` and `nfa.reversed` flags. if `nfa` or `nfap`
   // have one of them set, the result may not be what you expect
-  if (nfap->initial == nfap->final)
+  if (nfa.initial == nfa.final)
+    nfa_free(nfa);
+  else if (nfap->initial == nfap->final)
     nfa_free(*nfap), *nfap = nfa;
-  else if (nfa.initial != nfa.final) {
+  else {
     // this routine was written before `source, delta0, delta1` were added to
     // `struct nstate`, so let's quickly back-patch them while nobody's looking
 #define BACKPATCH(FIELD, DUAL)                                                 \
