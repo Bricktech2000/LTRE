@@ -52,9 +52,9 @@ static void bitset_set(uint8_t bitset[], unsigned id) {
 }
 
 static char *symset_fmt(symset_t symset) {
-  // output shall be parsable by `parse_symset` and satisfy the invariant
-  // `parse_symset . symset_fmt == id`. in the general case, will not satisfy
-  // `symset_fmt . parse_symset == id`
+  // returns a static buffer. output shall be parsable by `parse_symset` and
+  // satisfy the invariant `parse_symset . symset_fmt == id`. in the general
+  // case, will not satisfy `symset_fmt . parse_symset == id`
 
   static char buf[1024], nbuf[1024];
   char *bufp = buf, *nbufp = nbuf;
@@ -1225,44 +1225,755 @@ struct nfa ltre_uncompile(struct dstate *dfa) {
   return nfa;
 }
 
-char *ltre_decompile(struct dstate *dfa) {
-  // we codegen the DFA straight into a regular expression string. start by
-  // turning the DFA into a GNFA stored as a matrix of `arrow`s on the stack,
-  // each of which holds a regular expression string as label and a precedence
-  // value for parenthesizing
-  enum prec {
-    ALT,    // outermost is an alternation
-    CONCAT, // outermost is a concatenation
-    QUANT,  // outermost is a quantifier
-    SYMSET, // outermost is a symset
-  };
-  struct arrow {
-    // we use a `NULL` label as a shorthand for empty /[]/ transitions an an
-    // empty string as a shorthand for epsilon /()/ transitions. this way we can
-    // test for /[]/ with `if (!label)` and test for /()/ with `if (!*label)`
-    char *label;
-    enum prec prec;
-  };
+// this struct is used solely during DFA-to-RE decompilation, as an intermediate
+// representation for regular expression simplification using rewrite rules. we
+// store /()/ (epsilon) as the empty concatenation and /[]/ (empty set) as the
+// empty alternation. in rewrite rules it's useful to think of /r+/ and /r?/ as
+// units, so we encode them using their own `regex_type`s
+struct regex {
+  enum regex_type {
+    TYPE_ALT,    // access children with `REGEX_CHILDREN`
+    TYPE_CONCAT, // access children with `REGEX_CHILDREN`
+    TYPE_STAR,   // access child with `REGEX_CHILD`
+    TYPE_PLUS,   // access child with `REGEX_CHILD`
+    TYPE_OPT,    // access child with `REGEX_CHILD`
+    TYPE_SYMSET, // access underlying symset with `REGEX_SYMSET`
+  } type;
+
+  // `dat` should really be this union, but a flexible array member has to be
+  // the direct child of a struct. so instead, we define `unsigned char dat[]`
+  // along with a few macros that cast it to the right type.
+  //
+  // union {
+  //   struct regex *children[];
+  //   struct regex *child;
+  //   symset_t symset;
+  // } dat;
+
+#define REGEX_CHILDREN(REGEX) ((struct regex **)&(REGEX)->dat)
+#define REGEX_CHILD(REGEX) (*REGEX_CHILDREN(REGEX))
+#define REGEX_SYMSET(REGEX) (*(symset_t *)&(REGEX)->dat)
+  unsigned char dat[];
+};
+
+static struct regex *regex_alloc_symset(enum regex_type type) {
+  // `type` must be `TYPE_SYMSET`
+  struct regex *regex = malloc(sizeof(struct regex) + sizeof(symset_t));
+  memset(REGEX_SYMSET(regex), 0x00, sizeof(symset_t));
+  regex->type = type;
+  return regex;
+}
+
+static struct regex *regex_alloc_child(enum regex_type type) {
+  // `type` must be one of `TYPE_STAR`, `TYPE_PLUS`, `TYPE_OPT`
+  struct regex *regex = malloc(sizeof(struct regex) + sizeof(struct regex *));
+  REGEX_CHILD(regex) = NULL;
+  regex->type = type;
+  return regex;
+}
+
+static struct regex *regex_alloc_children(enum regex_type type,
+                                          int children_len) {
+  // `type` must be either `TYPE_ALT` or `TYPE_CONCAT`. the `NULL` terminator of
+  // the `REGEX_CHILDREN` array will be at index `children_len`
+  struct regex *regex = malloc(sizeof(struct regex) +
+                               (children_len + 1) * sizeof(struct regex *));
+  for (int i = 0; i < children_len + 1; i++)
+    REGEX_CHILDREN(regex)[i] = NULL;
+  regex->type = type;
+  return regex;
+}
+
+static int regex_children_len(struct regex *regex) {
+  // `regex->type` must be either `TYPE_ALT` or `TYPE_CONCAT`
+  int children_len = 0;
+  for (struct regex **child = REGEX_CHILDREN(regex); *child; child++)
+    children_len++;
+  return children_len;
+}
+
+static void regex_free(struct regex *regex) {
+  switch (regex->type) {
+  case TYPE_ALT:
+  case TYPE_CONCAT:
+    for (struct regex **child = REGEX_CHILDREN(regex); *child; child++)
+      regex_free(*child);
+    break;
+  case TYPE_STAR:
+  case TYPE_PLUS:
+  case TYPE_OPT:
+    regex_free(REGEX_CHILD(regex));
+    break;
+  case TYPE_SYMSET:
+    break;
+  }
+
+  free(regex);
+}
+
+static struct regex *regex_clone(struct regex *regex) {
+  struct regex *clone = NULL;
+
+  switch (regex->type) {
+  case TYPE_ALT:
+  case TYPE_CONCAT:;
+    int children_len = regex_children_len(regex);
+    clone = regex_alloc_children(regex->type, children_len);
+    for (int i = 0; i < children_len; i++)
+      REGEX_CHILDREN(clone)[i] = regex_clone(REGEX_CHILDREN(regex)[i]);
+    break;
+  case TYPE_STAR:
+  case TYPE_PLUS:
+  case TYPE_OPT:
+    clone = regex_alloc_child(regex->type);
+    REGEX_CHILD(clone) = regex_clone(REGEX_CHILD(regex));
+    break;
+  case TYPE_SYMSET:
+    clone = regex_alloc_symset(regex->type);
+    memcpy(REGEX_SYMSET(clone), REGEX_SYMSET(regex), sizeof(symset_t));
+    break;
+  }
+
+  return clone;
+}
+
+static int regex_cmp(struct regex *regex1, struct regex *regex2) {
+  // returns an integer less than, equal to, or greater than zero if `regex1`
+  // is, respectively, less than, equal to, or greater than `regex2`. the
+  // ordering used is rather arbitrary and purposefully doesn't take into
+  // account associativity and commutativity
+
+  int cmp;
+  if (cmp = regex1->type - regex2->type)
+    return cmp;
+
+  switch (regex1->type) {
+  case TYPE_ALT:
+  case TYPE_CONCAT:;
+    struct regex **child1 = REGEX_CHILDREN(regex1),
+                 **child2 = REGEX_CHILDREN(regex2);
+    for (; *child1 && *child2; child1++, child2++)
+      if (cmp = regex_cmp(*child1, *child2))
+        return cmp;
+    return !!*child1 - !!*child2;
+  case TYPE_STAR:
+  case TYPE_PLUS:
+  case TYPE_OPT:
+    if (cmp = regex_cmp(REGEX_CHILD(regex1), REGEX_CHILD(regex2)))
+      return cmp;
+    return 0;
+  case TYPE_SYMSET:
+    for (int chr = 0; chr < 256; chr++)
+      if (cmp = bitset_get(REGEX_SYMSET(regex1), chr) -
+                bitset_get(REGEX_SYMSET(regex2), chr))
+        return cmp;
+    return 0;
+  }
+
+  abort(); // should have diverged
+}
+
+static size_t regex_fmt_len(struct regex *regex, enum regex_type prec) {
+  // returns the length of the string that would be produced by `regex_fmt`,
+  // excluding the null terminator. this is a one-to-one mirror of `regex_fmt`,
+  // except we calculate length instead of writing to a buffer
+
+  if (regex->type == TYPE_OPT &&
+      (prec == TYPE_ALT || REGEX_CHILD(regex)->type == TYPE_ALT))
+    return regex_fmt_len(REGEX_CHILD(regex), prec) + 1;
+
+  size_t len = regex->type < prec;
+
+  switch (regex->type) {
+  case TYPE_ALT:
+    len += 2 * !REGEX_CHILD(regex);
+    for (struct regex **child = REGEX_CHILDREN(regex); *child; child++)
+      len += regex_fmt_len(*child, TYPE_ALT) + !!child[1];
+    break;
+  case TYPE_CONCAT:
+    for (struct regex **child = REGEX_CHILDREN(regex); *child; child++) {
+      struct regex **c = child;
+      while (c[1] && regex_cmp(*c, c[1]) == 0)
+        c++;
+      int run = c + 1 - child;
+      int l = run > 1 ? regex_fmt_len(*child, TYPE_SYMSET) : 0;
+      len += run >= 3 || l >= 3 ? child = c, l + snprintf(NULL, 0, "{%d}", run)
+                                : regex_fmt_len(*child, TYPE_CONCAT);
+    }
+    break;
+  case TYPE_STAR:
+  case TYPE_PLUS:
+  case TYPE_OPT:
+    len += regex_fmt_len(REGEX_CHILD(regex), TYPE_SYMSET) + 1;
+    break;
+  case TYPE_SYMSET:
+    len += strlen(symset_fmt(REGEX_SYMSET(regex)));
+    break;
+  }
+
+  return len + (regex->type < prec);
+}
+
+static char *regex_fmt(struct regex *regex, char *buf, enum regex_type prec) {
+  // converts `regex` to a string in `buf`. null-terminates `buf` and returns
+  // a pointer to the null terminator. call `regex_fmt_len` to know how much
+  // memory to allocate for `buf`. `prec` is a lower bound on the precedence of
+  // the regex to be produced; call initially with `prec = 0`
+
+  // (r|s)? |- |r|s|
+  // r? |- |r , if within an alternation
+  bool opt_alt = false;
+  if (regex->type == TYPE_OPT &&
+      (prec == TYPE_ALT || REGEX_CHILD(regex)->type == TYPE_ALT))
+    opt_alt = true, regex = REGEX_CHILD(regex);
+
+  if (regex->type < prec)
+    *buf++ = '(';
+
+  if (opt_alt)
+    *buf++ = '|';
+
+  switch (regex->type) {
+  case TYPE_ALT:
+    if (!*REGEX_CHILDREN(regex))
+      *buf++ = '[', *buf++ = ']';
+    for (struct regex **child = REGEX_CHILDREN(regex); *child; child++) {
+      buf = regex_fmt(*child, buf, TYPE_ALT);
+      if (child[1])
+        *buf++ = '|';
+    }
+    break;
+  case TYPE_CONCAT:
+    for (struct regex **child = REGEX_CHILDREN(regex); *child; child++) {
+      // rrr... |- r{n}
+      // will not rewrite 'ababab -> (ab){3}'
+      struct regex **c = child;
+      while (c[1] && regex_cmp(*c, c[1]) == 0)
+        c++;
+      int run = c + 1 - child;
+      // using /{1}/ will always make the regex longer, so when we have a run of
+      // length 1, avoid calling `regex_fmt` on the child and pretend like it's
+      // too short to be worth using /{n}/ on. this improves performance
+      int len = run == 1 ? 0 : regex_fmt(*child, buf, TYPE_SYMSET) - buf;
+      // only use /{n}/ if it'll make the regex shorter (subject to the above)
+      if (run >= 3 || len >= 3)
+        child = c, buf += len + sprintf(buf + len, "{%d}", run);
+      else
+        buf = regex_fmt(*child, buf, TYPE_CONCAT);
+    }
+    break;
+  case TYPE_STAR:
+  case TYPE_PLUS:
+  case TYPE_OPT:
+    // here we use `prec = TYPE_SYMSET` because the direct child of a quantifier
+    // can't be a quantifier, as specified by the grammar
+    buf = regex_fmt(REGEX_CHILD(regex), buf, TYPE_SYMSET);
+    *buf++ = "*+?"[regex->type - TYPE_STAR];
+    break;
+  case TYPE_SYMSET:;
+    char *fmt = symset_fmt(REGEX_SYMSET(regex));
+    strcpy(buf, fmt), buf += strlen(fmt);
+    break;
+  }
+
+  if (regex->type < prec)
+    *buf++ = ')';
+
+  return *buf = '\0', buf;
+}
+
+static void regex_dump(struct regex *regex, int indent) {
+  switch (regex->type) {
+  case TYPE_ALT:
+  case TYPE_CONCAT:
+    printf("%*s%s {\n", indent, "", regex->type == TYPE_ALT ? "ALT" : "CONCAT");
+    for (struct regex **child = REGEX_CHILDREN(regex); *child; child++)
+      regex_dump(*child, indent + 2);
+    printf("%*s}\n", indent, "");
+    break;
+  case TYPE_STAR:
+  case TYPE_PLUS:
+  case TYPE_OPT:;
+    printf("%*s%s\n", indent, "",
+           (char *[3]){"STAR", "PLUS", "OPT"}[regex->type - TYPE_STAR]);
+    regex_dump(REGEX_CHILD(regex), indent + 2);
+    break;
+  case TYPE_SYMSET:
+    printf("%*sSYMSET %s\n", indent, "", symset_fmt(REGEX_SYMSET(regex)));
+    break;
+  }
+}
+
+static struct regex *regex_from_str(char **regex) {
+  // constructs a `struct regex` intermediate representation from a regular
+  // expression string obeying the grammar below. returns a pointer one past
+  // the end of the regular expression parsed. meant for internal debugging
+  //
+  // <regex> ::= <term> ("|" <term>)*
+  // <term> ::= <factor>*
+  // <factor> ::= <atom> ("*" | "+" | "?")?
+  // <atom> ::= "(" <regex> ")" | "\\" <metachar>
+  //          | (? any character except <metachar> ?)
+  // <metachar> ::= "\\" | "*" | "+" | "?" | "(" | ")" | "|"
+
+  struct regex *regex_ = regex_alloc_children(TYPE_ALT, 0);
+
+  while (1) {
+    struct regex *term = regex_alloc_children(TYPE_CONCAT, 0);
+
+    while (1) {
+      struct regex *atom = NULL;
+
+      if (**regex == '(') {
+        char *prev_regex = (*regex)++;
+        atom = regex_from_str(regex);
+        if (**regex == ')')
+          ++*regex;
+        else
+          *regex = prev_regex, regex_free(atom), atom = NULL;
+      }
+
+      const char *metachars = "\\*+?()|";
+      if (**regex && !strchr(metachars, **regex) ||
+          **regex == '\\' && *++*regex && strchr(METACHARS, **regex)) {
+        symset_t symset = {0};
+        bitset_set(symset, **regex), ++*regex;
+        atom = regex_alloc_symset(TYPE_SYMSET);
+        memcpy(REGEX_SYMSET(atom), symset, sizeof(symset_t));
+      }
+
+      if (atom == NULL)
+        break;
+
+      struct regex *factor = atom;
+      const char *quants = "*+?", *quant = strchr(quants, **regex);
+      if (**regex && quant) {
+        ++*regex;
+        factor = regex_alloc_child(TYPE_STAR + (quant - quants));
+        REGEX_CHILD(factor) = atom;
+      }
+
+      struct regex *concat = regex_alloc_children(TYPE_CONCAT, 2);
+      REGEX_CHILDREN(concat)[0] = term;
+      REGEX_CHILDREN(concat)[1] = factor;
+      term = concat;
+    }
+
+    struct regex *alt = regex_alloc_children(TYPE_ALT, 2);
+    REGEX_CHILDREN(alt)[0] = regex_;
+    REGEX_CHILDREN(alt)[1] = term;
+    regex_ = alt;
+
+    if (**regex != '|')
+      break;
+    ++*regex;
+  }
+
+  return regex_;
+}
+
+static bool regex_simplify_assoc(struct regex **regex) {
+  // flatten nested REGEX_CHILDREN
+
+  bool subchildren = false;
+  int subchildren_len = 0;
+  for (struct regex **child = REGEX_CHILDREN(*regex); *child; child++)
+    if ((*child)->type == (*regex)->type)
+      subchildren_len += regex_children_len(*child), subchildren = true;
+
+  if (!subchildren)
+    return false;
+
+  struct regex *new = regex_alloc_children(
+      (*regex)->type, regex_children_len(*regex) + subchildren_len);
+  struct regex **newchild = REGEX_CHILDREN(new);
+  for (struct regex **child = REGEX_CHILDREN(*regex); *child; child++) {
+    if ((*child)->type == (*regex)->type) {
+      for (struct regex **subchild = REGEX_CHILDREN(*child); *subchild;
+           subchild++)
+        *newchild++ = *subchild;
+      free(*child);
+    } else
+      *newchild++ = *child;
+  }
+
+  free(*regex), *regex = new;
+  return true;
+}
+
+static bool regex_simplify_singleton(struct regex **regex) {
+  // turn regex with one-element REGEX_CHILDREN into the child
+
+  if (!*REGEX_CHILDREN(*regex) || REGEX_CHILDREN(*regex)[1])
+    return false;
+
+  struct regex *old = *regex;
+  *regex = *REGEX_CHILDREN(*regex), free(old);
+  return true;
+}
+
+static bool regex_simplify_nested(struct regex **regex, enum regex_type inner,
+                                  enum regex_type outer, enum regex_type res) {
+  // flatten regex of type `inner` whose REGEX_CHILD has type `outer` into a
+  // regex of type `res`
+
+  if ((*regex)->type != outer || REGEX_CHILD(*regex)->type != inner)
+    return false;
+
+  struct regex *old = *regex;
+  *regex = REGEX_CHILD(*regex), free(old);
+  (*regex)->type = res;
+  return true;
+}
+
+static bool regex_simplify_adjacent(struct regex **child, enum regex_type type,
+                                    enum regex_type next, enum regex_type res) {
+  // turn regex of type `type` followed by regex of type `next` with equal
+  // REGEX_CHILDs into one regex of type `res` with that child
+
+  if ((*child)->type != type || child[1]->type != next)
+    return false;
+
+  if (regex_cmp(REGEX_CHILD(*child), REGEX_CHILD(child[1])) != 0)
+    return false;
+
+  child[1]->type = res;
+  for (regex_free(*child); *child; child++)
+    *child = child[1];
+  return true;
+}
+
+static void regex_simplify(struct regex **regex) {
+  // simplify `regex` in-place by iteratively applying rewrite rules until none
+  // match. rewrite rules either directly decrease cost or help in decreasing
+  // cost, a rough measure of regex complexity, as defined by:
+  //
+  // cost(r|s) = cost(r) + cost(s) + 1
+  // cost(rs) = cost(r) + cost(s)
+  // cost(r*) = cost(r+) = cost(r?) = cost(r) + 1
+  // cost([uv]) = 1
+  //
+  // this is a pragmatic best-effort algorithm. it simplifies a regular
+  // expression until it's not obvious how it could be simplified further.
+  // in aggregate, global minima are unlikely to be attained
+
+  // a successful rewrite rule application ends either in `goto resimplify_all`
+  // or in `goto resimplify_fast`. `resimplify_all` recursively re-simplifies
+  // children; when that is not needed, use `resimplify_fast` instead
+resimplify_all:
+  switch ((*regex)->type) {
+  case TYPE_ALT:
+  case TYPE_CONCAT:
+    for (struct regex **child = REGEX_CHILDREN(*regex); *child; child++)
+      regex_simplify(child);
+    break;
+  case TYPE_STAR:
+  case TYPE_PLUS:
+  case TYPE_OPT:
+    regex_simplify(&REGEX_CHILD(*regex));
+    break;
+  case TYPE_SYMSET:
+    break;
+  }
+
+resimplify_fast:
+  switch ((*regex)->type) {
+  case TYPE_ALT:
+    // (r|s)|t |- r|s|t
+    // r|(s|t) |- r|s|t
+    // since we encode /[]/ as the empty alternation, we get for free:
+    // r|[] -> r
+    // []|r -> r
+    if (regex_simplify_assoc(regex))
+      goto resimplify_fast;
+
+    // r |- r
+    if (regex_simplify_singleton(regex))
+      goto resimplify_fast;
+
+    // r|() |- r?
+    // ()|r |- r?
+    for (struct regex **epsilon = REGEX_CHILDREN(*regex); *epsilon; epsilon++)
+      if ((*epsilon)->type == TYPE_CONCAT && !*REGEX_CHILDREN(*epsilon)) {
+        struct regex *new = regex_alloc_child(TYPE_OPT);
+        for (free(*epsilon); *epsilon; epsilon++)
+          *epsilon = epsilon[1];
+        REGEX_CHILD(new) = *regex, *regex = new;
+        goto resimplify_all;
+      }
+
+    // rs|rt |- r(s|t)
+    // rs|ts |- (r|t)s
+    // rs|r |- r(s|)
+    // r|rt |- r(|t)
+    // sr|r |- (s|)r
+    // r|tr |- (|t)r
+    // r|r -> r
+    // will not rewrite 'r|s|(r|s)t -> (r|s)(t|)'
+    for (int suffix = 0; suffix < 2; suffix++) {
+      for (struct regex **child1 = REGEX_CHILDREN(*regex); *child1; child1++) {
+        // if `child1` is not of TYPE_CONCAT, take its "prefix" (or "suffix") to
+        // be `child1` itself
+        struct regex **prefix1 =
+            (*child1)->type == TYPE_CONCAT
+                ? REGEX_CHILDREN(*child1) +
+                      (suffix ? regex_children_len(*child1) - 1 : 0)
+                : child1;
+
+        for (struct regex **child2 = child1 + 1; *child2; child2++) {
+          // if `child2` is not of TYPE_CONCAT, take its "prefix" (or "suffix")
+          // to be `child2` itself
+          struct regex **prefix2 =
+              (*child2)->type == TYPE_CONCAT
+                  ? REGEX_CHILDREN(*child2) +
+                        (suffix ? regex_children_len(*child2) - 1 : 0)
+                  : child2;
+
+          if (regex_cmp(*prefix1, *prefix2) == 0) {
+            struct regex *concat = regex_alloc_children(TYPE_CONCAT, 2);
+            REGEX_CHILDREN(concat)[suffix ? 1 : 0] = *prefix1;
+
+            // create an alternation of the two children, replacing their common
+            // prefix with the empty concatenation /()/
+            regex_free(*prefix2);
+            *prefix1 = regex_alloc_children(TYPE_CONCAT, 0);
+            *prefix2 = regex_alloc_children(TYPE_CONCAT, 0);
+            struct regex *alt = regex_alloc_children(TYPE_ALT, 2);
+            REGEX_CHILDREN(alt)[0] = *child1;
+            REGEX_CHILDREN(alt)[1] = *child2;
+
+            REGEX_CHILDREN(concat)[suffix ? 0 : 1] = alt;
+
+            *child1 = concat;
+            for (; *child2; child2++)
+              *child2 = child2[1];
+            goto resimplify_all;
+          }
+        }
+      }
+    }
+
+    // these don't decrease cost but are what enable '[u]?|[v] -> [uv]?'. they
+    // must be applied after the distributivity rewrite rule, because otherwise
+    // we'd have 'r?|sr? -> (r|sr?)?' instead of 'r?|sr? -> r?s?'.
+    // r?|s |- (r|s)?
+    // r|s? |- (r|s)?
+    for (struct regex **opt = REGEX_CHILDREN(*regex); *opt; opt++)
+      if ((*opt)->type == TYPE_OPT) {
+        struct regex *new = *opt;
+        *opt = REGEX_CHILD(*opt);
+        REGEX_CHILD(new) = *regex, *regex = new;
+        goto resimplify_all;
+      }
+
+    // a|a* |- a*
+    // a*|a |- a*
+    // a|a+ |- a+
+    // a+|a |- a+
+    // these are already taken care of in TYPE_ALT:
+    // a|a? -> (a|a)? -> a?
+    // a?|a -> (a|a)? -> a?
+    for (struct regex **quant = REGEX_CHILDREN(*regex); *quant; quant++)
+      if ((*quant)->type == TYPE_STAR || (*quant)->type == TYPE_PLUS)
+        for (struct regex **child = REGEX_CHILDREN(*regex); *child; child++)
+          if (regex_cmp(REGEX_CHILD(*quant), *child) == 0) {
+            for (free(*child); *child; child++)
+              *child = child[1];
+            goto resimplify_all;
+          }
+
+    // [u]|[v] |- [uv]
+    for (struct regex **symset1 = REGEX_CHILDREN(*regex); *symset1; symset1++)
+      if ((*symset1)->type == TYPE_SYMSET)
+        for (struct regex **symset2 = symset1 + 1; *symset2; symset2++)
+          if ((*symset2)->type == TYPE_SYMSET) {
+            symset_t symset_union = {0};
+            for (int chr = 0; chr < 256; chr++)
+              if (bitset_get(REGEX_SYMSET(*symset1), chr) ||
+                  bitset_get(REGEX_SYMSET(*symset2), chr))
+                bitset_set(symset_union, chr);
+            memcpy(REGEX_SYMSET(*symset1), symset_union, sizeof(symset_t));
+            for (free(*symset2); *symset2; symset2++)
+              *symset2 = symset2[1];
+            goto resimplify_fast;
+          }
+
+    break;
+  case TYPE_CONCAT:
+    // (rs)t |- rst
+    // r(st) |- rst
+    // since we encode /()/ as the empty concatenation, we get for free:
+    // r() -> r
+    // ()r -> r
+    if (regex_simplify_assoc(regex))
+      goto resimplify_fast;
+
+    // r |- r
+    if (regex_simplify_singleton(regex))
+      goto resimplify_fast;
+
+    for (struct regex **child = REGEX_CHILDREN(*regex); *child && child[1];
+         child++) {
+      // r*r* |- r*
+      // r*r+ |- r+
+      // r*r? |- r*
+      if (regex_simplify_adjacent(child, TYPE_STAR, TYPE_STAR, TYPE_STAR) ||
+          regex_simplify_adjacent(child, TYPE_STAR, TYPE_PLUS, TYPE_PLUS) ||
+          regex_simplify_adjacent(child, TYPE_STAR, TYPE_OPT, TYPE_STAR))
+        goto resimplify_fast;
+
+      // r+r* |- r+
+      // r+r? |- r+
+      if (regex_simplify_adjacent(child, TYPE_PLUS, TYPE_STAR, TYPE_PLUS) ||
+          regex_simplify_adjacent(child, TYPE_PLUS, TYPE_OPT, TYPE_PLUS))
+        goto resimplify_fast;
+
+      // r?r* |- r*
+      // r?r+ |- r+
+      if (regex_simplify_adjacent(child, TYPE_OPT, TYPE_STAR, TYPE_STAR) ||
+          regex_simplify_adjacent(child, TYPE_OPT, TYPE_PLUS, TYPE_PLUS))
+        goto resimplify_fast;
+
+      // rewrite to match rewrite rule 'rr* |- r+' below:
+      // r*r |- rr*
+      // will not rewrite '(ab)*ab -> ab(ab)*'
+      // will not rewrite 'a(ab)*b -> ab(ab)*'
+      if ((*child)->type == TYPE_STAR &&
+          regex_cmp(REGEX_CHILD(*child), child[1]) == 0) {
+        struct regex *temp = *child;
+        *child = child[1], child[1] = temp;
+      }
+
+      // rr* |- r+
+      // will not rewrite 'ab(ab)* -> (ab)+'
+      if (child[1]->type == TYPE_STAR &&
+          regex_cmp(*child, REGEX_CHILD(child[1])) == 0) {
+        child[1]->type = TYPE_PLUS;
+        for (regex_free(*child); *child; child++)
+          *child = child[1];
+        goto resimplify_fast;
+      }
+
+      // r+r+ |- rr+
+      if ((*child)->type == TYPE_PLUS && child[1]->type == TYPE_PLUS &&
+          regex_cmp(*child, child[1]) == 0) {
+        struct regex *old = *child;
+        *child = REGEX_CHILD(*child), free(old);
+        goto resimplify_fast;
+      }
+    }
+
+    // r[] |- []
+    // []r |- []
+    for (struct regex **empty = REGEX_CHILDREN(*regex); *empty; empty++)
+      if ((*empty)->type == TYPE_ALT && !*REGEX_CHILDREN(*empty)) {
+        regex_free(*regex), *regex = regex_alloc_children(TYPE_ALT, 0);
+        goto resimplify_fast;
+      }
+
+    break;
+  case TYPE_STAR:
+  case TYPE_PLUS:
+  case TYPE_OPT:
+    // (r*)* |- r*
+    // (r+)* |- r*
+    // (r?)* |- r*
+    if (regex_simplify_nested(regex, TYPE_STAR, TYPE_STAR, TYPE_STAR) ||
+        regex_simplify_nested(regex, TYPE_STAR, TYPE_PLUS, TYPE_STAR) ||
+        regex_simplify_nested(regex, TYPE_STAR, TYPE_OPT, TYPE_STAR))
+      goto resimplify_fast;
+
+    // (r*)+ |- r*
+    // (r+)+ |- r+
+    // (r?)+ |- r*
+    if (regex_simplify_nested(regex, TYPE_PLUS, TYPE_STAR, TYPE_STAR) ||
+        regex_simplify_nested(regex, TYPE_PLUS, TYPE_PLUS, TYPE_PLUS) ||
+        regex_simplify_nested(regex, TYPE_PLUS, TYPE_OPT, TYPE_STAR))
+      goto resimplify_fast;
+
+    // (r*)? |- r*
+    // (r+)? |- r*
+    // (r?)? |- r?
+    if (regex_simplify_nested(regex, TYPE_OPT, TYPE_STAR, TYPE_STAR) ||
+        regex_simplify_nested(regex, TYPE_OPT, TYPE_PLUS, TYPE_STAR) ||
+        regex_simplify_nested(regex, TYPE_OPT, TYPE_OPT, TYPE_OPT))
+      goto resimplify_fast;
+
+    // ()* |- ()
+    // []* |- ()
+    // ()+ |- ()
+    // []+ |- []
+    // ()? |- ()
+    // []? |- ()
+    if ((REGEX_CHILD(*regex)->type == TYPE_ALT ||
+         REGEX_CHILD(*regex)->type == TYPE_CONCAT) &&
+        !*REGEX_CHILDREN(REGEX_CHILD(*regex))) {
+      struct regex *old = *regex;
+      *regex = REGEX_CHILD(*regex), free(old);
+      if ((*regex)->type == TYPE_STAR || (*regex)->type == TYPE_OPT)
+        (*regex)->type = TYPE_CONCAT;
+      goto resimplify_fast;
+    }
+
+    // (r*|s)* |- (r|s)*
+    // (r|s*)* |- (r|s)*
+    // (r+|s)* |- (r|s)*
+    // (r|s+)* |- (r|s)*
+    // (r*|s)+ |- (r|s)*
+    // (r|s*)+ |- (r|s)*
+    // (r+|s)+ |- (r|s)+
+    // (r|s+)+ |- (r|s)+
+    // (r*|s)? |- r*|s
+    // (r|s*)? |- r|s*
+    // (r+|s)? |- r*|s
+    // (r|s+)? |- r|s*
+    // these are already taken care of in TYPE_ALT:
+    // (r?|s)* -> ((r|s)?)* -> (r|s)*
+    // (r|s?)* -> ((r|s)?)* -> (r|s)*
+    // (r?|s)+ -> ((r|s)?)+ -> (r|s)*
+    // (r|s?)+ -> ((r|s)?)+ -> (r|s)*
+    // (r?|s)? -> ((r|s)?)? -> (r|s)?
+    // (r|s?)? -> ((r|s)?)? -> (r|s)?
+    if (REGEX_CHILD(*regex)->type == TYPE_ALT)
+      for (struct regex **child = REGEX_CHILDREN(REGEX_CHILD(*regex)); *child;
+           child++)
+        if ((*child)->type == TYPE_STAR || (*child)->type == TYPE_PLUS) {
+          if ((*regex)->type == TYPE_PLUS)
+            (*regex)->type = (*child)->type;
+          else if ((*regex)->type == TYPE_OPT)
+            (*regex)->type = TYPE_STAR;
+          struct regex *old = *child;
+          *child = REGEX_CHILD(*child), free(old);
+          goto resimplify_all;
+        }
+
+    break;
+  case TYPE_SYMSET:
+    break;
+  }
+}
+
+static struct regex *regex_from_dfa(struct dstate *dfa) {
+  // convert a DFA into a `struct regex` using the classic construction,
+  // turning the DFA into a GNFA stored as a matrix of `arrow`s on the stack
+  // then iteratively eliminating states by rerouting transitions. within this
+  // function and only within this function, we store empty /[]/ transitions
+  // as null pointers so they're easier to test for
 
   int dfa_size = dfa_get_size(dfa);
   // also create an auxiliary state and store it at index `dfa_size`
-  struct arrow arrows[dfa_size + 1][dfa_size + 1];
+  struct regex *arrows[dfa_size + 1][dfa_size + 1];
   for (int id = 0; id <= dfa_size; id++)
-    arrows[dfa_size][id].label = arrows[id][dfa_size].label = NULL;
+    arrows[dfa_size][id] = arrows[id][dfa_size] = NULL;
 
   // create an epsilon /()/ transition from the auxiliary state to the DFA's
   // initial state
-  arrows[dfa_size][dfa->id].label = malloc(1);
-  *arrows[dfa_size][dfa->id].label = '\0';
-  arrows[dfa_size][dfa->id].prec = SYMSET;
+  arrows[dfa_size][dfa->id] = regex_alloc_children(TYPE_CONCAT, 0);
   for (struct dstate *ds1 = dfa; ds1; ds1 = ds1->next) {
     // create epsilon /()/ transitions from the DFA's accepting states to the
     // auxiliary state
-    if (ds1->accepting) {
-      arrows[ds1->id][dfa_size].label = malloc(1);
-      *arrows[ds1->id][dfa_size].label = '\0';
-      arrows[ds1->id][dfa_size].prec = SYMSET;
-    }
+    if (ds1->accepting)
+      arrows[ds1->id][dfa_size] = regex_alloc_children(TYPE_CONCAT, 0);
 
     for (struct dstate *ds2 = dfa; ds2; ds2 = ds2->next) {
       bool empty = true;
@@ -1271,15 +1982,14 @@ char *ltre_decompile(struct dstate *dfa) {
         if (ds1->transitions[chr] == ds2)
           bitset_set(transitions, chr), empty = false;
 
-      arrows[ds1->id][ds2->id].label = NULL;
+      arrows[ds1->id][ds2->id] = NULL;
 
       if (empty)
         continue;
 
-      char *fmt = symset_fmt(transitions);
-      arrows[ds1->id][ds2->id].label = malloc(strlen(fmt) + 1);
-      strcpy(arrows[ds1->id][ds2->id].label, fmt);
-      arrows[ds1->id][ds2->id].prec = SYMSET;
+      arrows[ds1->id][ds2->id] = regex_alloc_symset(TYPE_SYMSET);
+      memcpy(REGEX_SYMSET(arrows[ds1->id][ds2->id]), transitions,
+             sizeof(symset_t));
     }
   }
 
@@ -1287,209 +1997,62 @@ char *ltre_decompile(struct dstate *dfa) {
   // its inbound and outbound transitions so as to bypass that state, while also
   // taking care of self-loops. don't ever select the auxiliary state, so that
   // when we're done the final regular expression ends up as a self-loop on the
-  // auxiliary state. choosing the state with minimal vertex degree seems to
-  // work okay, sa that's the heuristic we're using
+  // auxiliary state. choosing the state that minimizes 'in-degree * out-degree'
+  // seems to work okay, sa that's the heuristic we're using
   while (1) {
-    int best_fit;
-    int min_degree = INT_MAX;
+    int best_fit, min_cost = INT_MAX;
     for (int id1 = 0; id1 < dfa_size; id1++) {
-      int degree = 0;
-      // double-counts self-loops, which penalizes them, which is probably good
+      int in_degree = 0, out_degree = 0;
       for (int id2 = 0; id2 < dfa_size; id2++)
-        degree += !!arrows[id1][id2].label + !!arrows[id2][id1].label;
-      if (degree == 0)
+        in_degree += !!arrows[id2][id1], out_degree += !!arrows[id1][id2];
+
+      if (in_degree + out_degree == 0)
         continue; // state has already been processed
-      if (degree < min_degree)
-        min_degree = degree, best_fit = id1;
+
+      int cost = in_degree * out_degree;
+      if (cost <= min_cost)
+        min_cost = cost, best_fit = id1;
     }
 
-    if (min_degree == INT_MAX)
+    if (min_cost == INT_MAX)
       break; // all states have been processed
 
     // iterate through all pairs of inbound and outbound transitions, including
     // those to and from the auxiliary state
     for (int id1 = 0; id1 <= dfa_size; id1++) {
-      if (id1 == best_fit)
-        continue; // inbound transition must not be a self-loop
+      if (id1 == best_fit || !arrows[id1][best_fit])
+        continue; // inbound transition doesn't exist or is a self-loop
+
       for (int id2 = 0; id2 <= dfa_size; id2++) {
-        if (id2 == best_fit)
-          continue; // outbound transition must not be a self-loop
-        struct arrow in = arrows[id1][best_fit];  // current inbound transition
-        struct arrow out = arrows[best_fit][id2]; // current outbout transition
-        struct arrow self = arrows[best_fit][best_fit]; // self-transition
-        struct arrow existing = arrows[id1][id2]; // existing bypass transition
+        if (id2 == best_fit || !arrows[best_fit][id2])
+          continue; // outbound transition doesn't exist or is a self-loop
 
-        // (existing)|[](self)(out) == (existing)|(in)(self)[] == (existing)
-        if (!in.label || !out.label)
-          continue;
-
-        // get rid of the self-transition by concatenating it either onto the
-        // the inbound or outbound transition
-        struct arrow first, second;
-
-        ptrdiff_t diff;
-        if (!self.label || !*self.label) {
-          // (in)[]*(out) == (in)()*(out) == (in)(out)
-          first = in, second = out;
-        } else if (in.prec >= CONCAT && self.prec >= CONCAT &&
-                   (diff = strlen(in.label) - strlen(self.label)) >= 0 &&
-                   strcmp(in.label + diff, self.label) == 0) {
-          // hackily try to avoid breaking apart symsets in the inbound arrow
-          if (diff >= 1 && strchr("^-\\", in.label[diff - 1]) &&
-              (diff == 1 || in.label[diff - 2] != '\\'))
-            goto never_mind; // preserve ^aa* a-zz* \^a^a* but not \^aa* \-aa*
-          if (diff >= 2 && strncmp(&in.label[diff - 2], "\\x", 2) == 0 &&
-              (diff == 2 || in.label[diff - 3] != '\\'))
-            goto never_mind; // preserve \x0a(0a)* but not \\x0a(0a*)
-          if (diff >= 3 && strncmp(&in.label[diff - 3], "\\x", 2) == 0 &&
-              (diff == 3 || in.label[diff - 4] != '\\'))
-            goto never_mind; // preserve \x0aa* but not \\x0aa*
-
-          // (in_pre)(self)+(out) where (in) == (in_pre)(self)
-          first.label = malloc(strlen(in.label) + 5 + 1);
-          char *p = first.label;
-          if (diff != 0 && in.prec < CONCAT)
-            *p++ = '(';
-          memcpy(p, in.label, diff), p += diff;
-          if (diff != 0 && in.prec < CONCAT)
-            *p++ = ')';
-          if (self.prec <= QUANT)
-            *p++ = '(';
-          strcpy(p, self.label), p += strlen(self.label);
-          if (self.prec <= QUANT)
-            *p++ = ')';
-          *p++ = '+';
-          *p++ = '\0';
-          first.prec = CONCAT;
-          second = out;
-        } else
-        never_mind:
-          if (out.prec >= CONCAT && self.prec >= CONCAT &&
-              (diff = strlen(out.label) - strlen(self.label)) >= 0 &&
-              strncmp(out.label, self.label, strlen(self.label)) == 0) {
-            // it may appear that /a*a-z/ would be incorrectly broken apart and
-            // converted to /a+-z/, but this will never happen because we're
-            // decompiling a DFA and therefore if there is a self-loop on 'a',
-            // there can be no outbound transitions on 'a'
-
-            // (in)(self)+(out_post) where (out) == (self)(out_post)
-            second.label = malloc(strlen(out.label) + 5 + 1);
-            char *p = second.label;
-            if (self.prec <= QUANT)
-              *p++ = '(';
-            strcpy(p, self.label), p += strlen(self.label);
-            if (self.prec <= QUANT)
-              *p++ = ')';
-            *p++ = '+';
-            if (diff != 0 && out.prec < CONCAT)
-              *p++ = '(';
-            memcpy(p, out.label + diff, diff), p += diff;
-            if (diff != 0 && out.prec < CONCAT)
-              *p++ = ')';
-            *p++ = '\0';
-            second.prec = CONCAT;
-            first = in;
-          } else {
-            // (in)(self)*(out)
-            second.label =
-                malloc(strlen(self.label) + strlen(out.label) + 5 + 1);
-            char *p = second.label;
-            if (self.prec <= QUANT)
-              *p++ = '(';
-            strcpy(p, self.label), p += strlen(self.label);
-            if (self.prec <= QUANT)
-              *p++ = ')';
-            *p++ = '*';
-            if (out.prec < CONCAT)
-              *p++ = '(';
-            strcpy(p, out.label), p += strlen(out.label);
-            if (out.prec < CONCAT)
-              *p++ = ')';
-            *p++ = '\0';
-            second.prec = CONCAT;
-            first = in;
-          }
-
-        // concatenate the inbound and outbound transitions to create a
-        // transition that bypasses the best-fit state
-        struct arrow bypass;
-
-        if (!*first.label) {
-          // ()(second) == (second)
-          bypass = second;
-        } else if (!*second.label) {
-          // (first)() == (first)
-          bypass = first;
-        } else {
-          // (first)(second)
-          bypass.label =
-              malloc(strlen(first.label) + strlen(second.label) + 4 + 1);
-          char *p = bypass.label;
-          if (first.prec < CONCAT)
-            *p++ = '(';
-          strcpy(p, first.label), p += strlen(first.label);
-          if (first.prec < CONCAT)
-            *p++ = ')';
-          if (second.prec < CONCAT)
-            *p++ = '(';
-          strcpy(p, second.label), p += strlen(second.label);
-          if (second.prec < CONCAT)
-            *p++ = ')';
-          *p++ = '\0';
-          bypass.prec = CONCAT;
+        // construct /(self)*/
+        struct regex *star;
+        if (!arrows[best_fit][best_fit])
+          star = regex_alloc_children(TYPE_CONCAT, 0); // /[]*/ == /()/
+        else {
+          star = regex_alloc_child(TYPE_STAR);
+          REGEX_CHILD(star) = regex_clone(arrows[best_fit][best_fit]);
         }
 
-        // if there already exists a transition between the states we're
-        // targetting, merge it with our bypass transition using an alternation
-        struct arrow merged;
+        // construct /(inbound)(self)*(outbound)/
+        struct regex *concat = regex_alloc_children(TYPE_CONCAT, 3);
+        REGEX_CHILDREN(concat)[0] = regex_clone(arrows[id1][best_fit]);
+        REGEX_CHILDREN(concat)[1] = star;
+        REGEX_CHILDREN(concat)[2] = regex_clone(arrows[best_fit][id2]);
 
-        if (!bypass.label) {
-          // (existing)|[] == (existing)
-          merged = existing;
-        } else if (!existing.label) {
-          // []|(bypass) == (bypass)
-          if (bypass.label == first.label || bypass.label == second.label) {
-            merged.label = malloc(strlen(bypass.label) + 1);
-            strcpy(merged.label, bypass.label);
-            merged.prec = bypass.prec;
-          } else
-            merged = bypass;
-        } else if (!*existing.label) {
-          // ()|(bypass) == (bypass)?
-          merged.label = malloc(strlen(bypass.label) + 3 + 1);
-          char *p = merged.label;
-          if (bypass.prec <= QUANT)
-            *p++ = '(';
-          strcpy(p, bypass.label), p += strlen(bypass.label);
-          if (bypass.prec <= QUANT)
-            *p++ = ')';
-          *p++ = '?';
-          *p++ = '\0';
-          merged.prec = QUANT;
-        } else {
-          // (existing)|(bypass)
-          merged.label =
-              malloc(strlen(existing.label) + strlen(bypass.label) + 1 + 1);
-          char *p = merged.label;
-          strcpy(p, existing.label), p += strlen(existing.label);
-          *p++ = '|';
-          strcpy(p, bypass.label), p += strlen(bypass.label);
-          *p++ = '\0';
-          merged.prec = ALT;
+        // construct /existing|(inbound)(self)*(outbound)/
+        struct regex *alt;
+        if (!arrows[id1][id2])
+          alt = concat; // /(re)|[]/ == /(re)/
+        else {
+          alt = regex_alloc_children(TYPE_ALT, 2);
+          REGEX_CHILDREN(alt)[0] = arrows[id1][id2];
+          REGEX_CHILDREN(alt)[1] = concat;
         }
 
-        if (first.label != in.label)
-          free(first.label);
-        if (second.label != out.label)
-          free(second.label);
-        if (bypass.label != first.label && bypass.label != second.label &&
-            bypass.label != merged.label)
-          free(bypass.label);
-        if (existing.label != merged.label)
-          free(existing.label);
-
-        // replace the existing bypass transition with our merged transition
-        arrows[id1][id2] = merged;
+        arrows[id1][id2] = alt;
       }
     }
 
@@ -1497,15 +2060,28 @@ char *ltre_decompile(struct dstate *dfa) {
     // replace them all with empty /[]/ transitions, effectively eliminating
     // the state by isolating it
     for (int id = 0; id <= dfa_size; id++) {
-      free(arrows[id][best_fit].label), arrows[id][best_fit].label = NULL;
-      free(arrows[best_fit][id].label), arrows[best_fit][id].label = NULL;
+      if (arrows[id][best_fit])
+        regex_free(arrows[id][best_fit]), arrows[id][best_fit] = NULL;
+      if (arrows[best_fit][id])
+        regex_free(arrows[best_fit][id]), arrows[best_fit][id] = NULL;
     }
   }
 
   // the final regular expression ends up as a self-loop on the auxiliary state
-  char *regex = arrows[dfa_size][dfa_size].label;
-  if (!regex)
-    regex = malloc(3), strcpy(regex, "[]");
-
+  struct regex *regex = arrows[dfa_size][dfa_size];
+  regex = regex ? regex : regex_alloc_children(TYPE_ALT, 0);
   return regex;
+}
+
+char *ltre_decompile(struct dstate *dfa) {
+  struct regex *regex = regex_from_dfa(dfa);
+  // regex_dump(regex, 0);
+
+  regex_simplify(&regex);
+  // regex_dump(regex, 0);
+
+  char *buf = malloc(regex_fmt_len(regex, 0) + 1);
+  (void)regex_fmt(regex, buf, 0), regex_free(regex);
+
+  return buf;
 }

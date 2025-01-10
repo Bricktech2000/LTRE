@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-int main(int argc, char *aegv[]) {
+int main(void) {
   size_t len = 0, cap = 256;
   char *nl, *line = malloc(cap);
   while (fgets(line + len, cap - len, stdin) != NULL) {

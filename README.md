@@ -17,20 +17,20 @@ LTRE is a regular expression library written in C99 that has no dependencies but
                      ltre_matches_lazy          ltre_matches
 ```
 
-For sample regular expressions, see the test suite [test.c](test.c). For a more realistic use-case, see the minimal command-line search tool [ltrep.c](ltrep.c). For demos of of DFA decompilation and equivalence, see the regex complementation tool [compl.c](compl.c) and the regex equivalence tool [equiv.c](equiv.c).
+For sample regular expressions, see the test suite [test.c](test.c). For a more realistic use-case, see the small command-line search tool [ltrep.c](ltrep.c). For demos of of DFA decompilation and equivalence, see the regex complementation tool [compl.c](compl.c) and the regex equivalence tool [equiv.c](equiv.c).
 
 ## Usage
 
 To build and run the test suite:
 
-```bash
+```sh
 make test
 bin/test # should have no output
 ```
 
-To build and run the minimal search tool:
+To build and run the command-line search tool:
 
-```bash
+```sh
 make ltrep
 sh test.sh # should have no output
 bin/ltrep -h # displays usage
@@ -39,15 +39,15 @@ bin/ltrep -o '"(^[\\"]|\\<>)*"' ltrep.c ltre.c
 
 To build and run the regex complementation tool:
 
-```bash
+```sh
 make compl
 echo 'abc' | bin/compl
-# outputs a?|ab|(^a|a^b|ab^c|abc<>)<>*
+# outputs |ab?|(^a|a(^b|b(^c|c<>)))<>*
 ```
 
 To build and run the regex equivalence tool:
 
-```bash
+```sh
 make equiv
 echo -e '0-9+&~0.+\t0|1-90-9*' | bin/equiv # equivalent
 echo -e '(a+b*)*\t(a*b+)*' | bin/equiv # not equivalent
