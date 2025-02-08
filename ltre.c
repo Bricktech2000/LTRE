@@ -410,11 +410,10 @@ static uint8_t parse_hexbyte(char **regex, char **error) {
   uint8_t byte = 0;
   for (int i = 0; i < 2; i++) {
     byte <<= 4;
-    char chr = **regex;
-    if (isdigit(chr))
-      byte |= chr - '0';
-    else if (isxdigit(chr))
-      byte |= tolower(chr) - 'a' + 10;
+    if (isdigit(**regex))
+      byte |= **regex - '0';
+    else if (isxdigit(**regex))
+      byte |= tolower(**regex) - 'a' + 10;
     else {
       *error = "expected hex digit";
       return 0;
@@ -456,8 +455,7 @@ static uint8_t parse_escape(char **regex, char **error) {
 }
 
 static uint8_t parse_symbol(char **regex, char **error) {
-  if (**regex == '\\') {
-    ++*regex;
+  if (**regex == '\\' && ++*regex) {
     uint8_t escape = parse_escape(regex, error);
     if (*error)
       return 0;
@@ -487,36 +485,34 @@ static void parse_shorthand(symset_t symset, char **regex, char **error) {
   memset(symset, 0x00, sizeof(symset_t));
 
 #define RETURN_SYMSET(COND)                                                    \
-  for (int chr = 0; chr < 256; chr++)                                          \
-    if (COND)                                                                  \
-      bitset_set(symset, chr);                                                 \
-  return;
+  do {                                                                         \
+    for (int chr = 0; chr < 256; chr++)                                        \
+      if (COND)                                                                \
+        bitset_set(symset, chr);                                               \
+    return;                                                                    \
+  } while (0)
 
-  if (**regex == '\\') {
-    ++*regex;
-
+  if (**regex == '\\' && ++*regex) {
     switch (*(*regex)++) {
     case 'd':
-      RETURN_SYMSET(isdigit(chr))
+      RETURN_SYMSET(isdigit(chr));
     case 'D':
-      RETURN_SYMSET(!isdigit(chr))
+      RETURN_SYMSET(!isdigit(chr));
     case 's':
-      RETURN_SYMSET(isspace(chr))
+      RETURN_SYMSET(isspace(chr));
     case 'S':
-      RETURN_SYMSET(!isspace(chr))
+      RETURN_SYMSET(!isspace(chr));
     case 'w':
-      RETURN_SYMSET(chr == '_' || isalnum(chr))
+      RETURN_SYMSET(chr == '_' || isalnum(chr));
     case 'W':
-      RETURN_SYMSET(chr != '_' && !isalnum(chr))
+      RETURN_SYMSET(chr != '_' && !isalnum(chr));
     }
 
     --*regex, --*regex;
   }
 
-  if (**regex == '.') {
-    ++*regex;
-    RETURN_SYMSET(chr != '\n')
-  }
+  if (**regex == '.' && ++*regex)
+    RETURN_SYMSET(chr != '\n');
 
 #undef RETURN_SYMSET
 
@@ -525,9 +521,7 @@ static void parse_shorthand(symset_t symset, char **regex, char **error) {
 }
 
 static void parse_symset(symset_t symset, char **regex, char **error) {
-  bool complement = false;
-  if (**regex == '^')
-    ++*regex, complement = true;
+  bool complement = **regex == '^' && ++*regex;
 
   char *last_regex = *regex;
   parse_shorthand(symset, regex, error);
@@ -536,9 +530,7 @@ static void parse_symset(symset_t symset, char **regex, char **error) {
   *error = NULL;
   *regex = last_regex;
 
-  if (**regex == '[') {
-    ++*regex;
-
+  if (**regex == '[' && ++*regex) {
     memset(symset, 0x00, sizeof(symset_t));
     // hacky lookahead for better diagnostics
     while (!strchr("]", **regex)) {
@@ -551,19 +543,15 @@ static void parse_symset(symset_t symset, char **regex, char **error) {
         symset[i] |= sub[i];
     }
 
-    if (**regex != ']') {
-      *error = "expected ']'";
-      return;
-    }
+    if (**regex == ']' && ++*regex)
+      goto process_complement;
 
-    ++*regex;
-    goto process_complement;
+    *error = "expected ']'";
+    return;
   }
   *regex = last_regex;
 
-  if (**regex == '<') {
-    ++*regex;
-
+  if (**regex == '<' && ++*regex) {
     memset(symset, 0xff, sizeof(symset_t));
     // hacky lookahead for better diagnostics
     while (!strchr(">", **regex)) {
@@ -576,32 +564,28 @@ static void parse_symset(symset_t symset, char **regex, char **error) {
         symset[i] &= sub[i];
     }
 
-    if (**regex != '>') {
-      *error = "expected '>'";
-      return;
-    }
+    if (**regex == '>' && ++*regex)
+      goto process_complement;
 
-    ++*regex;
-    goto process_complement;
+    *error = "expected '>'";
+    return;
   }
   *regex = last_regex;
 
-  uint8_t begin = parse_symbol(regex, error);
+  uint8_t lower = parse_symbol(regex, error), upper = lower;
   if (!*error) {
-    uint8_t end = begin;
-    if (**regex == '-') {
-      ++*regex;
-      end = parse_symbol(regex, error);
+    if (**regex == '-' && ++*regex) {
+      upper = parse_symbol(regex, error);
       if (*error)
         return;
     }
 
-    end++; // open upper bound
+    upper++; // open upper bound
     memset(symset, 0x00, sizeof(symset_t));
-    uint8_t chr = begin;
+    uint8_t chr = lower;
     do // character range wraparound
       bitset_set(symset, chr);
-    while (++chr != end);
+    while (++chr != upper);
     goto process_complement;
   }
   return;
@@ -615,20 +599,16 @@ process_complement:
 
 static struct nfa parse_regex(char **regex, char **error);
 static struct nfa parse_atom(char **regex, char **error) {
-  if (**regex == '(') {
-    ++*regex;
+  if (**regex == '(' && ++*regex) {
     struct nfa sub = parse_regex(regex, error);
     if (*error)
       return (struct nfa){NULL};
 
-    if (**regex != ')') {
-      *error = "expected ')'";
-      nfa_free(sub);
-      return (struct nfa){NULL};
-    }
+    if (**regex == ')' && ++*regex)
+      return sub;
 
-    ++*regex;
-    return sub;
+    *error = "expected ')'";
+    return nfa_free(sub), (struct nfa){NULL};
   }
 
   struct nfa chars = {.initial = nstate_alloc(),
@@ -639,10 +619,8 @@ static struct nfa parse_atom(char **regex, char **error) {
   chars.initial->target = chars.final, chars.final->source = chars.initial;
 
   parse_symset(chars.initial->label, regex, error);
-  if (*error) {
-    nfa_free(chars);
-    return (struct nfa){NULL};
-  }
+  if (*error)
+    return nfa_free(chars), (struct nfa){NULL};
 
   return chars;
 }
@@ -655,8 +633,7 @@ static struct nfa parse_factor(char **regex, char **error) {
   //         <---
   // -->O-->(atom)-->O-->
   //     ----------->
-  if (**regex == '*') {
-    ++*regex;
+  if (**regex == '*' && ++*regex) {
     nfa_canonicalize(&atom);
     atom.final->epsilon1 = atom.initial, atom.initial->delta1 = atom.final;
     nfa_pad_initial(&atom), nfa_pad_final(&atom);
@@ -666,8 +643,7 @@ static struct nfa parse_factor(char **regex, char **error) {
 
   //         <---
   // -->O-->(atom)-->O-->
-  if (**regex == '+') {
-    ++*regex;
+  if (**regex == '+' && ++*regex) {
     nfa_canonicalize(&atom);
     atom.final->epsilon1 = atom.initial, atom.initial->delta1 = atom.final;
     nfa_pad_initial(&atom), nfa_pad_final(&atom);
@@ -676,8 +652,7 @@ static struct nfa parse_factor(char **regex, char **error) {
 
   // -->(atom)-->
   //     --->
-  if (**regex == '?') {
-    ++*regex;
+  if (**regex == '?' && ++*regex) {
     nfa_canonicalize(&atom);
     if (atom.initial->epsilon1)
       nfa_pad_initial(&atom);
@@ -688,40 +663,35 @@ static struct nfa parse_factor(char **regex, char **error) {
   }
 
   char *last_regex = *regex;
-  if (**regex == '{') {
-    ++*regex;
+  if (**regex == '{' && ++*regex) {
     nfa_canonicalize(&atom);
     unsigned min = parse_natural(regex, error);
-    if (*error && min == UINT_MAX) { // overflow condition
-      nfa_free(atom);
-      return (struct nfa){NULL};
-    } else if (*error)
+    if (*error && min == UINT_MAX) // overflow condition
+      return nfa_free(atom), (struct nfa){NULL};
+    else if (*error)
       min = 0, *error = NULL;
 
     unsigned max = min;
     bool max_unbounded = false;
-    if (**regex == ',') {
-      ++*regex;
+    if (**regex == ',' && ++*regex) {
       max = parse_natural(regex, error);
-      if (*error && max == UINT_MAX) { // overflow condition
-        nfa_free(atom);
-        return (struct nfa){NULL};
-      } else if (*error)
+      if (*error && max == UINT_MAX) // overflow condition
+        return nfa_free(atom), (struct nfa){NULL};
+      else if (*error)
         max_unbounded = true, *error = NULL;
     }
 
-    if (**regex != '}') {
+    if (**regex == '}' && ++*regex)
+      ;
+    else {
       *error = "expected '}'";
-      nfa_free(atom);
-      return (struct nfa){NULL};
+      return nfa_free(atom), (struct nfa){NULL};
     }
-    ++*regex;
 
     if (min > max && !max_unbounded) {
       *regex = last_regex;
       *error = "misbounded quantifier";
-      nfa_free(atom);
-      return (struct nfa){NULL};
+      return nfa_free(atom), (struct nfa){NULL};
     }
 
     struct nfa atoms = {.complemented = false, .reversed = false};
@@ -763,9 +733,7 @@ static struct nfa parse_factor(char **regex, char **error) {
 }
 
 static struct nfa parse_term(char **regex, char **error) {
-  bool complement = false;
-  if (**regex == '~')
-    ++*regex, complement = true;
+  bool complement = **regex == '~' && ++*regex;
 
   struct nfa term = {.complemented = false, .reversed = false};
   term.initial = term.final = nstate_alloc();
@@ -773,10 +741,8 @@ static struct nfa parse_term(char **regex, char **error) {
   // hacky lookahead for better diagnostics
   while (!strchr(")|&", **regex)) {
     struct nfa factor = parse_factor(regex, error);
-    if (*error) {
-      nfa_free(term);
-      return (struct nfa){NULL};
-    }
+    if (*error)
+      return nfa_free(term), (struct nfa){NULL};
 
     nfa_canonicalize(&factor);
     nfa_concat(&term, factor);
@@ -796,10 +762,8 @@ static struct nfa parse_regex(char **regex, char **error) {
   if (**regex == '|' || **regex == '&') {
     bool intersect = *(*regex)++ == '&';
     struct nfa alt = parse_regex(regex, error);
-    if (*error) {
-      nfa_free(re);
-      return (struct nfa){NULL};
-    }
+    if (*error)
+      return nfa_free(re), (struct nfa){NULL};
 
     // we perform NFA intersection by rewriting into an alternation using De
     // Morgan's law `a&b == ~(~a|~b)`. this isn't nearly as inefficient as it
@@ -838,8 +802,7 @@ struct nfa ltre_parse(char **regex, char **error) {
 
   if (**regex != '\0') {
     *error = "expected end of input";
-    nfa_free(nfa);
-    return (struct nfa){NULL};
+    return nfa_free(nfa), (struct nfa){NULL};
   }
 
   return nfa;
@@ -1529,10 +1492,10 @@ static struct regex *regex_from_str(char **regex) {
       if (**regex == '(') {
         char *prev_regex = (*regex)++;
         atom = regex_from_str(regex);
-        if (**regex == ')')
-          ++*regex;
-        else
+        if (**regex != ')')
           *regex = prev_regex, regex_free(atom), atom = NULL;
+        else
+          ++*regex;
       }
 
       const char *metachars = "\\*+?()|";
@@ -1549,8 +1512,7 @@ static struct regex *regex_from_str(char **regex) {
 
       struct regex *factor = atom;
       const char *quants = "*+?", *quant = strchr(quants, **regex);
-      if (**regex && quant) {
-        ++*regex;
+      if (**regex && quant && ++*regex) {
         factor = regex_alloc_child(TYPE_STAR + (quant - quants));
         REGEX_CHILD(factor) = atom;
       }
@@ -1943,7 +1905,7 @@ resimplify_fast:
           if ((*regex)->type == TYPE_PLUS)
             (*regex)->type = (*child)->type;
           else if ((*regex)->type == TYPE_OPT)
-            (*regex)->type = TYPE_STAR;
+            (*child)->type = TYPE_STAR, child = regex;
           struct regex *old = *child;
           *child = REGEX_CHILD(*child), free(old);
           goto resimplify_all;

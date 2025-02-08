@@ -289,6 +289,7 @@ int main(void) {
   test("\\.-4+", "./01234", true);
   test("5-\\?+", "56789:;<=>?", true);
   test("\\(-\\++", "()*+", true);
+  test("\\t-\\r+", "\t\n\v\f\r", true);
   test("a{,2}", "", true);
   test("a{,2}", "a", true);
   test("a{,2}", "aa", true);
@@ -358,6 +359,22 @@ int main(void) {
   test(HEX_RGB, "#00ff", false);
   test(HEX_RGB, "#abcdef", true);
   test(HEX_RGB, "#abcdeff", false);
+  // ISO/IEC 9899:TC3, $6.4.9 'Comments'
+#define BLOCK_COMMENT "/\\*(~<>*\\*/<>*)\\*/"
+#define LINE_COMMENT "//^\\n*\\n"
+#define COMMENT BLOCK_COMMENT "|" LINE_COMMENT
+  test(COMMENT, "// */\n", true);
+  test(COMMENT, "// //\n", true);
+  test(COMMENT, "/* */", true);
+  test(COMMENT, "/*/", false);
+  test(COMMENT, "/*/*/", true);
+  test(COMMENT, "/**/*/", false);
+  test(COMMENT, "/*/**/*/", false);
+  test(COMMENT, "/*//*/", true);
+  test(COMMENT, "/**/\n", false);
+  test(COMMENT, "//**/\n", true);
+  test(COMMENT, "///*\n*/", false);
+  test(COMMENT, "//\n\n", false);
   // ISO/IEC 9899:TC3, $7.19.6.1 'The fprintf function'.
   // see also gcc-14/gcc/c-family/c-format.cc:713 'print_char_table'
   // and gcc-14/gcc/c-family/c-format.h:25 'enum format_lengths'
