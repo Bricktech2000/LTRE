@@ -24,14 +24,14 @@ For sample regular expressions, see the test suite [test.c](test.c). For a more 
 To build and run the test suite:
 
 ```sh
-make test
+make bin/test
 bin/test # should have no output
 ```
 
 To build and run the command-line search tool:
 
 ```sh
-make ltrep
+make bin/ltrep
 sh test.sh # should have no output
 bin/ltrep -h # displays usage
 bin/ltrep -o '"(^[\\"]|\\<>)*"' ltrep.c ltre.c
@@ -40,7 +40,7 @@ bin/ltrep -o '"(^[\\"]|\\<>)*"' ltrep.c ltre.c
 To build and run the regex complementation tool:
 
 ```sh
-make compl
+make bin/compl
 echo 'abc' | bin/compl
 # outputs |ab?|(^a|a(^b|b(^c|c<>)))<>*
 ```
@@ -48,7 +48,7 @@ echo 'abc' | bin/compl
 To build and run the regex equivalence tool:
 
 ```sh
-make equiv
+make bin/equiv
 echo -e '0-9+&~0.+\t0|1-90-9*' | bin/equiv # equivalent
 echo -e '(a+b*)*\t(a*b+)*' | bin/equiv # not equivalent
 ```
