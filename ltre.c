@@ -999,19 +999,15 @@ struct dstate *ltre_compile(struct nfa nfa) {
   // unreachable states because the powerset construction yields a DFA with
   // no unreachable states
   for (struct dstate *ds1 = dfa; ds1; ds1 = ds1->next) {
-    for (struct dstate *prev = ds1; prev; prev = prev->next) {
-      for (struct dstate *ds2; ds2 = prev->next;) {
-        if (ARE_DIS(ds1->id, ds2->id))
-          break;
-
-        // states are indistinguishable. merge them
+    for (struct dstate *next, **ds2 = &ds1->next; *ds2;) {
+      if (!ARE_DIS(ds1->id, (*ds2)->id)) {
         for (struct dstate *dstate = dfa; dstate; dstate = dstate->next)
           for (int chr = 0; chr < 256; chr++)
-            if (dstate->transitions[chr] == ds2)
+            if (dstate->transitions[chr] == *ds2)
               dstate->transitions[chr] = ds1;
-
-        prev->next = ds2->next, free(ds2);
-      }
+        next = (*ds2)->next, free(*ds2), *ds2 = next;
+      } else
+        ds2 = &(*ds2)->next;
     }
 
     // flag "terminating" states. a terminating state is a state which either
