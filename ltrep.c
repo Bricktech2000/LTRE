@@ -176,7 +176,7 @@ int main(int argc, char **argv) {
       printf("%zu:", lineno);                                                  \
     if (args.opts.byteoff)                                                     \
       printf("%zu:", begin - line + lineoff);                                  \
-    fwrite(begin, sizeof(uint8_t), end - begin, stdout);                       \
+    fwrite(begin, sizeof(*begin), end - begin, stdout);                        \
     fputc('\n', stdout);                                                       \
   } while (0)
 
