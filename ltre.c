@@ -106,7 +106,7 @@ static char *symset_fmt(symset_t symset) {
 }
 
 static struct nstate *nstate_alloc(void) {
-  struct nstate *nstate = malloc(sizeof(struct nstate));
+  struct nstate *nstate = malloc(sizeof(*nstate));
   *nstate = (struct nstate){.id = -1};
   return nstate;
 }
@@ -137,7 +137,7 @@ static struct nfa nfa_clone(struct nfa nfa) {
   nstates[nstate->id]->FIELD = nstates[nstate->FIELD->id]
 
   for (struct nstate *nstate = nfa.initial; nstate; nstate = nstate->next) {
-    memcpy(nstates[nstate->id]->label, nstate->label, sizeof(symset_t));
+    memcpy(nstates[nstate->id]->label, nstate->label, sizeof(nstate->label));
     MAYBE_COPY(target);
     MAYBE_COPY(source);
     MAYBE_COPY(epsilon0);
@@ -180,7 +180,7 @@ static void nfa_concat(struct nfa *nfap, struct nfa nfa) {
 
 #undef BACKPATCH
 
-    memcpy(nfap->final, nfa.initial, sizeof(struct nstate));
+    memcpy(nfap->final, nfa.initial, sizeof(*nfap->final));
     nfap->final = nfa.final;
     free(nfa.initial);
   }
@@ -211,7 +211,7 @@ static void nfa_canonicalize(struct nfa *nfa) {
   struct dstate *dfa = ltre_compile(*nfa);
   struct nfa canonicalized = ltre_uncompile(dfa);
   nfa_free(*nfa), dfa_free(dfa);
-  memcpy(nfa, &canonicalized, sizeof(struct nfa));
+  memcpy(nfa, &canonicalized, sizeof(*nfa));
 }
 
 #define DUMP_SYMSET(SYMSET)                                                    \
@@ -252,7 +252,7 @@ void nfa_dump(struct nfa nfa) {
 }
 
 static struct dstate *dstate_alloc(int bitset_size) {
-  struct dstate *dstate = malloc(sizeof(struct dstate) + bitset_size);
+  struct dstate *dstate = malloc(sizeof(*dstate) + bitset_size);
   *dstate = (struct dstate){.id = -1};
   memset(dstate->bitset, 0x00, bitset_size);
   return dstate;
@@ -481,14 +481,14 @@ static uint8_t parse_symbol(char **regex, char **error) {
   return *(*regex)++;
 }
 
-static void parse_shorthand(symset_t symset, char **regex, char **error) {
-  memset(symset, 0x00, sizeof(symset_t));
+static void parse_shorthand(symset_t *symset, char **regex, char **error) {
+  memset(symset, 0x00, sizeof(*symset));
 
 #define RETURN_SYMSET(COND)                                                    \
   do {                                                                         \
     for (int chr = 0; chr < 256; chr++)                                        \
       if (COND)                                                                \
-        bitset_set(symset, chr);                                               \
+        bitset_set(*symset, chr);                                              \
     return;                                                                    \
   } while (0)
 
@@ -520,7 +520,7 @@ static void parse_shorthand(symset_t symset, char **regex, char **error) {
   return;
 }
 
-static void parse_symset(symset_t symset, char **regex, char **error) {
+static void parse_symset(symset_t *symset, char **regex, char **error) {
   bool complement = **regex == '^' && ++*regex;
 
   char *last_regex = *regex;
@@ -531,16 +531,16 @@ static void parse_symset(symset_t symset, char **regex, char **error) {
   *regex = last_regex;
 
   if (**regex == '[' && ++*regex) {
-    memset(symset, 0x00, sizeof(symset_t));
+    memset(symset, 0x00, sizeof(*symset));
     // hacky lookahead for better diagnostics
     while (!strchr("]", **regex)) {
       symset_t sub;
-      parse_symset(sub, regex, error);
+      parse_symset(&sub, regex, error);
       if (*error)
         return;
 
-      for (int i = 0; i < sizeof(symset_t); i++)
-        symset[i] |= sub[i];
+      for (int i = 0; i < sizeof(*symset); i++)
+        (*symset)[i] |= sub[i];
     }
 
     if (**regex == ']' && ++*regex)
@@ -552,16 +552,16 @@ static void parse_symset(symset_t symset, char **regex, char **error) {
   *regex = last_regex;
 
   if (**regex == '<' && ++*regex) {
-    memset(symset, 0xff, sizeof(symset_t));
+    memset(symset, 0xff, sizeof(*symset));
     // hacky lookahead for better diagnostics
     while (!strchr(">", **regex)) {
       symset_t sub;
-      parse_symset(sub, regex, error);
+      parse_symset(&sub, regex, error);
       if (*error)
         return;
 
-      for (int i = 0; i < sizeof(symset_t); i++)
-        symset[i] &= sub[i];
+      for (int i = 0; i < sizeof(*symset); i++)
+        (*symset)[i] &= sub[i];
     }
 
     if (**regex == '>' && ++*regex)
@@ -581,10 +581,10 @@ static void parse_symset(symset_t symset, char **regex, char **error) {
     }
 
     upper++; // open upper bound
-    memset(symset, 0x00, sizeof(symset_t));
+    memset(symset, 0x00, sizeof(*symset));
     uint8_t chr = lower;
     do // character range wraparound
-      bitset_set(symset, chr);
+      bitset_set(*symset, chr);
     while (++chr != upper);
     goto process_complement;
   }
@@ -592,8 +592,8 @@ static void parse_symset(symset_t symset, char **regex, char **error) {
 
 process_complement:
   if (complement)
-    for (int i = 0; i < sizeof(symset_t); i++)
-      symset[i] = ~symset[i];
+    for (int i = 0; i < sizeof(*symset); i++)
+      (*symset)[i] = ~(*symset)[i];
   return;
 }
 
@@ -618,7 +618,7 @@ static struct nfa parse_atom(char **regex, char **error) {
   chars.initial->next = chars.final;
   chars.initial->target = chars.final, chars.final->source = chars.initial;
 
-  parse_symset(chars.initial->label, regex, error);
+  parse_symset(&chars.initial->label, regex, error);
   if (*error)
     return nfa_free(chars), (struct nfa){NULL};
 
@@ -831,8 +831,8 @@ void ltre_partial(struct nfa *nfa) {
   nfa_pad_initial(nfa), nfa_pad_final(nfa);
   nfa->initial->target = nfa->initial->source = nfa->initial;
   nfa->final->target = nfa->final->source = nfa->final;
-  memset(nfa->initial->label, 0xff, sizeof(symset_t));
-  memset(nfa->final->label, 0xff, sizeof(symset_t));
+  memset(nfa->initial->label, 0xff, sizeof(nfa->initial->label));
+  memset(nfa->final->label, 0xff, sizeof(nfa->final->label));
 }
 
 void ltre_ignorecase(struct nfa *nfa) {
@@ -999,15 +999,19 @@ struct dstate *ltre_compile(struct nfa nfa) {
   // unreachable states because the powerset construction yields a DFA with
   // no unreachable states
   for (struct dstate *ds1 = dfa; ds1; ds1 = ds1->next) {
-    for (struct dstate *next, **ds2 = &ds1->next; *ds2;) {
-      if (!ARE_DIS(ds1->id, (*ds2)->id)) {
+    for (struct dstate *prev = ds1; prev; prev = prev->next) {
+      for (struct dstate *ds2; ds2 = prev->next;) {
+        if (ARE_DIS(ds1->id, ds2->id))
+          break;
+
+        // states are indistinguishable. merge them
         for (struct dstate *dstate = dfa; dstate; dstate = dstate->next)
           for (int chr = 0; chr < 256; chr++)
-            if (dstate->transitions[chr] == *ds2)
+            if (dstate->transitions[chr] == ds2)
               dstate->transitions[chr] = ds1;
-        next = (*ds2)->next, free(*ds2), *ds2 = next;
-      } else
-        ds2 = &(*ds2)->next;
+
+        prev->next = ds2->next, free(ds2);
+      }
     }
 
     // flag "terminating" states. a terminating state is a state which either
@@ -1161,7 +1165,7 @@ struct nfa ltre_uncompile(struct dstate *dfa) {
       }
 
       src->target = tgt, tgt->source = src;
-      memcpy(src->label, transitions, sizeof(symset_t));
+      memcpy(src->label, transitions, sizeof(transitions));
     }
   }
 
@@ -1219,15 +1223,15 @@ struct regex {
 
 static struct regex *regex_alloc_symset(enum regex_type type) {
   // `type` must be `TYPE_SYMSET`
-  struct regex *regex = malloc(sizeof(struct regex) + sizeof(symset_t));
-  memset(REGEX_SYMSET(regex), 0x00, sizeof(symset_t));
+  struct regex *regex = malloc(sizeof(*regex) + sizeof(REGEX_SYMSET(regex)));
+  memset(REGEX_SYMSET(regex), 0x00, sizeof(REGEX_SYMSET(regex)));
   regex->type = type;
   return regex;
 }
 
 static struct regex *regex_alloc_child(enum regex_type type) {
   // `type` must be one of `TYPE_STAR`, `TYPE_PLUS`, `TYPE_OPT`
-  struct regex *regex = malloc(sizeof(struct regex) + sizeof(struct regex *));
+  struct regex *regex = malloc(sizeof(*regex) + sizeof(REGEX_CHILD(regex)));
   REGEX_CHILD(regex) = NULL;
   regex->type = type;
   return regex;
@@ -1237,8 +1241,8 @@ static struct regex *regex_alloc_children(enum regex_type type,
                                           int children_len) {
   // `type` must be either `TYPE_ALT` or `TYPE_CONCAT`. the `NULL` terminator of
   // the `REGEX_CHILDREN` array will be at index `children_len`
-  struct regex *regex = malloc(sizeof(struct regex) +
-                               (children_len + 1) * sizeof(struct regex *));
+  struct regex *regex = malloc(
+      sizeof(*regex) + (children_len + 1) * sizeof(*REGEX_CHILDREN(regex)));
   for (int i = 0; i < children_len + 1; i++)
     REGEX_CHILDREN(regex)[i] = NULL;
   regex->type = type;
@@ -1291,7 +1295,8 @@ static struct regex *regex_clone(struct regex *regex) {
     break;
   case TYPE_SYMSET:
     clone = regex_alloc_symset(regex->type);
-    memcpy(REGEX_SYMSET(clone), REGEX_SYMSET(regex), sizeof(symset_t));
+    memcpy(REGEX_SYMSET(clone), REGEX_SYMSET(regex),
+           sizeof(REGEX_SYMSET(clone)));
     break;
   }
 
@@ -1500,7 +1505,7 @@ static struct regex *regex_from_str(char **regex) {
         symset_t symset = {0};
         bitset_set(symset, **regex), ++*regex;
         atom = regex_alloc_symset(TYPE_SYMSET);
-        memcpy(REGEX_SYMSET(atom), symset, sizeof(symset_t));
+        memcpy(REGEX_SYMSET(atom), symset, sizeof(symset));
       }
 
       if (atom == NULL)
@@ -1752,7 +1757,7 @@ resimplify_fast:
               if (bitset_get(REGEX_SYMSET(*symset1), chr) ||
                   bitset_get(REGEX_SYMSET(*symset2), chr))
                 bitset_set(symset_union, chr);
-            memcpy(REGEX_SYMSET(*symset1), symset_union, sizeof(symset_t));
+            memcpy(REGEX_SYMSET(*symset1), symset_union, sizeof(symset_union));
             for (free(*symset2); *symset2; symset2++)
               *symset2 = symset2[1];
             goto resimplify_fast;
@@ -1949,7 +1954,7 @@ static struct regex *regex_from_dfa(struct dstate *dfa) {
 
       arrows[ds1->id][ds2->id] = regex_alloc_symset(TYPE_SYMSET);
       memcpy(REGEX_SYMSET(arrows[ds1->id][ds2->id]), transitions,
-             sizeof(symset_t));
+             sizeof(transitions));
     }
   }
 
