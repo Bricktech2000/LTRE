@@ -160,15 +160,13 @@ int main(int argc, char **argv) {
     uint8_t *p, *begin = line, *end = nl;                                      \
     if (args.opts.onlymat && !args.opts.exact) {                               \
       p = end; /* leftmost */                                                  \
-      for (struct dstate *dstate = rev_dfa; p > line;                          \
-           dstate = dstate->transitions[*--p])                                 \
-        if (dstate->accepting)                                                 \
-          begin = p;                                                           \
+      for (struct dstate *dstate = rev_dfa;                                    \
+           dstate->accepting ? begin = p : 0, p > line;)                       \
+        dstate = dstate->transitions[*--p];                                    \
       p = begin; /* longest */                                                 \
-      for (struct dstate *dstate = fwd_dfa; p < nl;                            \
-           dstate = dstate->transitions[*p++])                                 \
-        if (dstate->accepting)                                                 \
-          end = p;                                                             \
+      for (struct dstate *dstate = fwd_dfa;                                    \
+           dstate->accepting ? end = p : 0, p < nl;)                           \
+        dstate = dstate->transitions[*p++];                                    \
     }                                                                          \
     if (args.opts.filehd)                                                      \
       printf("%s:", *file);                                                    \

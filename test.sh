@@ -66,20 +66,21 @@ echo -n 56\  >> test.act; echo -e 'diff\t' | bin/ltrep -Hb 'diff\s' test.sh - >>
 
 echo -n 57\  >> test.act; echo -e 'abaabb' | bin/ltrep -o 'b+' >> test.act
 echo -n 58\  >> test.act; echo -e 'abbba'  | bin/ltrep -o 'b+' >> test.act
-echo -n 59\  >> test.act; echo -e 'bar'    | bin/ltrep -ob 'a' >> test.act
+echo -n 59\  >> test.act; echo -e 'aaaa'   | bin/ltrep -o 'a+' >> test.act
+echo -n 60\  >> test.act; echo -e 'bar'    | bin/ltrep -ob 'a' >> test.act
 
-echo -n 60\  >> test.act; echo -e 'bar' | bin/ltrep -xp 'a' >> test.act
-echo -n 61\  >> test.act; echo -e 'bar' | bin/ltrep -px 'a' >> test.act
-echo -n 62\  >> test.act; echo -e 'BAR' | bin/ltrep -is 'a' >> test.act
-echo -n 63\  >> test.act; echo -e 'BAR' | bin/ltrep -si 'a' >> test.act
-echo -n 64\  >> test.act; echo -e 'BAR' | bin/ltrep -Ss 'a' >> test.act
-echo -n 65\  >> test.act; echo -e 'BAR' | bin/ltrep -sS 'a' >> test.act
-echo -n 66\  >> test.act; echo -e 'bar' | bin/ltrep -Si 'A' >> test.act
-echo -n 67\  >> test.act; echo -e 'bar' | bin/ltrep -iS 'A' >> test.act
-echo -n 68\  >> test.act; echo -e 'bar' | bin/ltrep -nN 'a' >> test.act
-echo -n 69\  >> test.act; echo -e 'bar' | bin/ltrep -Nn 'a' >> test.act
-echo -n 70\  >> test.act; echo -e 'bar' | bin/ltrep -Hh 'a' >> test.act
-echo -n 71\  >> test.act; echo -e 'bar' | bin/ltrep -hH 'a' >> test.act
+echo -n 61\  >> test.act; echo -e 'bar' | bin/ltrep -xp 'a' >> test.act
+echo -n 62\  >> test.act; echo -e 'bar' | bin/ltrep -px 'a' >> test.act
+echo -n 63\  >> test.act; echo -e 'BAR' | bin/ltrep -is 'a' >> test.act
+echo -n 64\  >> test.act; echo -e 'BAR' | bin/ltrep -si 'a' >> test.act
+echo -n 65\  >> test.act; echo -e 'BAR' | bin/ltrep -Ss 'a' >> test.act
+echo -n 66\  >> test.act; echo -e 'BAR' | bin/ltrep -sS 'a' >> test.act
+echo -n 67\  >> test.act; echo -e 'bar' | bin/ltrep -Si 'A' >> test.act
+echo -n 68\  >> test.act; echo -e 'bar' | bin/ltrep -iS 'A' >> test.act
+echo -n 69\  >> test.act; echo -e 'bar' | bin/ltrep -nN 'a' >> test.act
+echo -n 70\  >> test.act; echo -e 'bar' | bin/ltrep -Nn 'a' >> test.act
+echo -n 71\  >> test.act; echo -e 'bar' | bin/ltrep -Hh 'a' >> test.act
+echo -n 72\  >> test.act; echo -e 'bar' | bin/ltrep -hH 'a' >> test.act
 
 diff test.exp test.act
 # cp test.act test.exp # for updating the test suite

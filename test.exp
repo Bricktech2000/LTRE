@@ -47,18 +47,19 @@ diff
 <stdin>
 54 1
 1
-55 test.sh:84:diff test.exp test.act
+55 test.sh:85:diff test.exp test.act
 <stdin>:1:diff	
-56 test.sh:5475:diff test.exp test.act
+56 test.sh:5550:diff test.exp test.act
 <stdin>:0:diff	
 57 b
 58 bbb
-59 1:a
-60 bar
-61 62 63 BAR
-64 65 BAR
-66 bar
-67 68 bar
-69 1:bar
-70 bar
-71 <stdin>:bar
+59 aaaa
+60 1:a
+61 bar
+62 63 64 BAR
+65 66 BAR
+67 bar
+68 69 bar
+70 1:bar
+71 bar
+72 <stdin>:bar
