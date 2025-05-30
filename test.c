@@ -298,6 +298,9 @@ int main(void) {
   test("a{}", "a", false);
   test("a{,}", "", true);
   test("a{,}", "a", true);
+  test("~", "", false);
+  test("~", "a", true);
+  test("~", "aa", true);
   test("~0*", "", false);
   test("~0*", "0", false);
   test("~0*", "00", false);

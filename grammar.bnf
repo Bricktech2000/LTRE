@@ -1,4 +1,4 @@
-<regex> ::= <term> ("|" <term> | "&" <term>)* # a regex is alternations and intersections of terms
+<regex> ::= (<term> "|" | <term> "&")* <term> # a regex is alternations and intersections of terms
 <term> ::= "~"? <factor>* # a term is a possibly complemented sequence of factors
 <factor> ::= <atom> ("*" | "+" | "?" | "{" <natural>? ("," <natural>?)? "}")? # a factor is a quantified atom
 <atom> ::= <symset> | "(" <regex> ")" # an atom is either a symset or a subregex
