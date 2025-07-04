@@ -21,21 +21,21 @@ int main(void) {
     *sep = '\0';
 
     char *error = NULL, *loc = line;
-    struct nfa nfa1 = ltre_parse(&loc, &error);
+    struct regex *regex1 = ltre_parse(&loc, &error);
     if (error)
       goto parse_error;
     loc = sep + 1;
-    struct nfa nfa2 = ltre_parse(&loc, &error);
+    struct regex *regex2 = ltre_parse(&loc, &error);
     if (error) {
     parse_error:
       fprintf(stderr, "parse error: %s near '%.16s'\n", error, loc);
       continue;
     }
 
-    struct dstate *dfa1 = ltre_compile(nfa1), *dfa2 = ltre_compile(nfa2);
+    struct dstate *dfa1 = ltre_compile(regex1), *dfa2 = ltre_compile(regex2);
     puts(ltre_equivalent(dfa1, dfa2) ? "equivalent" : "not equivalent");
 
-    nfa_free(nfa1), nfa_free(nfa2), dfa_free(dfa1), dfa_free(dfa2);
+    dfa_free(dfa1), dfa_free(dfa2);
   }
 
   if (!feof(stdin))

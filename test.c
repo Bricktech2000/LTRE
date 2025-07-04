@@ -4,7 +4,7 @@
 #include <string.h>
 
 struct test {
-  char *regex;
+  char *pattern;
   char *input;
   bool matches;
   bool errors;
@@ -18,63 +18,69 @@ struct test {
 void test(struct test args) {
 #define test(...) test((struct test){__VA_ARGS__})
   static struct test memo = {0};
-  static struct nfa nfa = {NULL};
   static struct dstate *dfa = NULL, *ldfa = NULL;
 
-  if (dfa && strcmp(memo.regex, args.regex) == 0 &&
+  if (dfa && strcmp(memo.pattern, args.pattern) == 0 &&
       memcmp(&memo.errors, &args.errors, sizeof(bool[6])) == 0)
     goto check_matches;
   memo = args;
 
-  char *error = NULL, *loc = args.regex;
-  nfa_free(nfa), nfa = ltre_parse(&loc, &error);
+  char *error = NULL, *loc = args.pattern;
+  struct regex *regex = ltre_parse(&loc, &error);
 
   if (!!error != args.errors)
-    printf("test failed: /%s/ parse\n", args.regex);
+    printf("test failed: /%s/ parse\n", args.pattern);
   // if (error)
-  //   printf("note: /%s/ %s near '%.16s'\n", args.regex, error, loc);
+  //   printf("note: /%s/ %s near '%.16s'\n", args.pattern, error, loc);
 
   if (error)
     return;
 
   if (args.partial)
-    ltre_partial(&nfa);
+    regex = regex_concat(REGEXES(regex_univ(), regex, regex_univ()));
   if (args.ignorecase)
-    ltre_ignorecase(&nfa);
+    regex = regex_ignorecase(regex, false);
   if (args.complement)
-    ltre_complement(&nfa);
+    regex = regex_compl(regex);
   if (args.reverse)
-    ltre_reverse(&nfa);
+    regex = regex_reverse(regex);
 
-  // NFA -> DFA
+  // regex -> pattern -> regex
+  char *pattern = ltre_stringify(regex);
+  regex = ltre_parse(&pattern, NULL), free(pattern);
+  if (regex == NULL)
+    abort(); // invariant broken
+
+  // regex -> dfa
   struct dstate *clone;
-  dfa_free(dfa), dfa = ltre_compile(nfa);
+  dfa_free(dfa), dfa = ltre_compile(regex_incref(regex));
 
-  // DFA -> BUF -> DFA -> NFA -> DFA
-  uint8_t *buf = dfa_serialize(dfa, &(size_t){0});
-  clone = dfa, dfa = dfa_deserialize(buf, &(size_t){0});
-  nfa_free(nfa), nfa = ltre_uncompile(dfa);
-  dfa_free(dfa), dfa = ltre_compile(nfa);
-  free(buf);
-
-  if (!args.quick) {
-    // DFA -> RE -> NFA -> DFA
-    char *re = ltre_decompile(dfa);
-    nfa_free(nfa), nfa = ltre_parse(&re, NULL);
-    dfa_free(dfa), dfa = ltre_compile(nfa);
-    free(re);
-  }
+  // dfa -> image -> dfa
+  uint8_t *image = dfa_serialize(dfa, &(size_t){0});
+  clone = dfa, dfa = dfa_deserialize(image, &(size_t){0}), free(image);
 
   if (!ltre_equivalent(dfa, clone))
     abort(); // invariant broken
   dfa_free(clone);
 
-  dfa_free(ldfa), ldfa = NULL;
+  if (!args.quick) {
+    // dfa -> regex -> pattern -> regex -> dfa
+    struct regex *regex = ltre_decompile(dfa);
+    char *pattern = ltre_stringify(regex);
+    regex = ltre_parse(&pattern, NULL), free(pattern);
+    clone = dfa, dfa = ltre_compile(regex);
+
+    if (!ltre_equivalent(dfa, clone))
+      abort(); // invariant broken
+    dfa_free(clone);
+  }
+
+  dfa_free(ldfa), ldfa = ltre_lazy_init(regex);
 
 check_matches:
   if (ltre_matches(dfa, (uint8_t *)args.input) != args.matches ||
-      ltre_matches_lazy(&ldfa, nfa, (uint8_t *)args.input) != args.matches)
-    printf("test failed: /%s/ against '%s'\n", args.regex, args.input);
+      ltre_lazy_matches(&ldfa, (uint8_t *)args.input) != args.matches)
+    printf("test failed: /%s/ against '%s'\n", args.pattern, args.input);
 }
 
 int main(void) {
@@ -195,6 +201,7 @@ int main(void) {
   test("", "", true, .ignorecase = true);
   test("abCdEF", "aBCdEf", true, .ignorecase = true);
   test("ab", "abc", false, .ignorecase = true);
+  test("~ab", "ab", true, .ignorecase = true);
   test("a", "", true, .complement = true);
   test("a", "aa", true, .complement = true);
   test("a", "a", false, .complement = true);
@@ -331,6 +338,18 @@ int main(void) {
   test("b(~a*)", "b", false);
   test("b(~a*)", "ba", false);
   test("b(~a*)", "bbaa", true);
+  test("a*(~)", "", false);
+  test("a*(~)", "a", true);
+  test("a*(~)", "bc", true);
+  test("(~)*", "", true);
+  test("(~)*", "a", true);
+  test("(~)*", "ab", true);
+  test("(~)+", "", false);
+  test("(~)+", "a", true);
+  test("(~)+", "ab", true);
+  test("(~)?", "", true);
+  test("(~)?", "a", true);
+  test("(~)?", "ab", true);
   test("abc>", .errors = true);
   test("<abc", .errors = true);
   test("[a?b]", .errors = true);

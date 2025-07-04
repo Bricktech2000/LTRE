@@ -12,10 +12,6 @@ struct dstate {
   struct dstate *transitions[256];
   bool accepting, terminating;
 };
-struct nstate {
-  uint8_t label[256 / 8];
-  struct nstate *target, *source;
-};
 
 // '-S' is dealt with separately in `parse_args`
 const char *opts = "v xpisF HhnNb o c l ";
@@ -32,24 +28,24 @@ struct args {
     bool count;   // -c
     bool list;    // -l
   } opts;
-  char *regex;  // <regex>
-  char **files; // [files...]
+  char *pattern; // <pattern>
+  char **files;  // [files...]
 };
 
-#define VER "LTREP 0.1\n"
-#define DESC "LTREP --- print lines matching a regex\n"
+#define VER "LTREP 0.2\n"
+#define DESC "LTREP --- print lines matching a pattern\n"
 #define HELP "Try 'ltrep -h' for more information.\n"
 #define USAGE                                                                  \
   "Usage:\n"                                                                   \
-  "  ltrep [options...] [--] <regex> [files...]\n"                             \
+  "  ltrep [options...] [--] <pattern> [files...]\n"                           \
   "  ltrep [options...] -h,-V\n"
 #define OPTS                                                                   \
   "Options:\n"                                                                 \
   "  -v     invert match; print non-matching lines\n"                          \
   "  -x/-p  exact match; match against entire line\n"                          \
   "  -i/-s  ignore case; match case-insensitively\n"                           \
-  "  -S     smart case; set '-i' if regex lowercase\n"                         \
-  "  -F     interpret the regex as a fixed string\n"                           \
+  "  -S     smart case; set '-i' if pattern lowercase\n"                       \
+  "  -F     interpret the pattern as a fixed string\n"                         \
   "  -H/-h  prefix matching lines with file names\n"                           \
   "  -n/-N  prefix matching lines with line numbers\n"                         \
   "  -b     prefix matching lines with byte offsets\n"                         \
@@ -58,7 +54,7 @@ struct args {
   "  -l     only print a list of files with matches\n"
 #define EXTRA                                                                  \
   "Options '-i/-s' and '-S' override eachother.\n"                             \
-  "A '--' is needed when <regex> begins in '-'.\n"                             \
+  "A '--' is needed when <pattern> begins in '-'.\n"                           \
   "A file of '-' denotes standard input. If no\n"                              \
   "files are provided, read from standard input.\n"                            \
   "Show help and version info with '-h' and '-V'.\n"
@@ -93,7 +89,7 @@ struct args parse_args(char **argv) {
 
   if (!*argv)
     fputs(USAGE HELP, stdout), exit(EXIT_FAILURE);
-  args.regex = *argv;
+  args.pattern = *argv;
   args.files = ++argv;
 
   if (smartcase) {
@@ -101,7 +97,7 @@ struct args parse_args(char **argv) {
     // as uppercase and cause matches to become case-sensitive. probably not
     // much of an issue because one could write /^\d/ and /\x6a/ instead
     args.opts.ignore = true; // '-S' overrides '-i/-s'
-    for (char *c = args.regex; *c; c++)
+    for (char *c = args.pattern; *c; c++)
       args.opts.ignore &= !isupper(*c);
   }
 
@@ -111,54 +107,55 @@ struct args parse_args(char **argv) {
 int main(int argc, char **argv) {
   struct args args = parse_args(argv);
 
-  char *error = NULL, *loc = args.regex;
-  struct nfa nfa =
+  char *error = NULL, *loc = args.pattern;
+  struct regex *regex =
       args.opts.fixed ? ltre_fixed_string(loc) : ltre_parse(&loc, &error);
   if (error)
     fprintf(stderr, "parse error: %s near '%.16s'\n", error, loc),
         exit(EXIT_FAILURE);
 
-  // swapping `ltre_partial` and `ltre_ignorecase` would not affect the accepted
-  // language, but swapping `ltre_partial` and `ltre_complement` or swapping
-  // `ltre_ignorecase` and `ltre_complement` would. we perform `ltre_complement`
-  // last to preserve that:
+  // swapping checks for `args.exact` and `args.ignore` would not affect the
+  // accepted language, but swapping checks for `args.exact` and `args.invert`
+  // or swapping checks for `args.ignore` and `args.invert` would. we check
+  // for `args.invert` last to preserve that:
   // - `ltrep -x -vp` means _does not contain_
   // - `ltrep -x -vi` means _is not a case variation of_
   // - `ltrep -x -vpi` means _does not contain any case variation of_
-  if (!args.opts.exact)
-    ltre_partial(&nfa);
-  if (args.opts.ignore)
-    ltre_ignorecase(&nfa);
-  if (args.opts.invert)
-    ltre_complement(&nfa);
-
-  // `ltre_partial` effectively turns a regex /abc/ into a "partial match" regex
-  // /<>*abc<>*/. in terms of formal languages this is the natural thing to do,
-  // but the problem is we can't use it to extract match boundaries, which is
-  // required when '-o' is supplied. the solution is (to dangerously poke into
-  // LTRE's internal representation of NFAs) to construct:
-  // 1. a "reverse DFA" `rev_dfa` that matches /<>*cba/, which we run from the
+  //
+  // given a regex /abc/, for match boundary extraction (when '-o' is supplied
+  // and matching is partial and not inverted), we construct:
+  // 1. the regular partial DFA `dfa` that matches /<>*abc<>*/, which we run
+  //    in the usual way to filter out lines that don't contain matches;
+  // 2. a "reverse DFA" `rev_dfa` that matches /<>*cba/, which we run from the
   //    end of a line to find the spots where a partial match can begin;
-  // 2. a "forward DFA" `fwd_dfa` that matches /abc/, which we run from the
+  // 3. a "forward DFA" `fwd_dfa` that matches /abc/, which we run from the
   //    beginning of a partial match to find the spots where it can end.
   // by interpreting those "can"s in the right way, we guarantee leftmost-
   // longest semantics for match boundary extraction
-  struct dstate *dfa = ltre_compile(nfa);
+
   struct dstate *rev_dfa = NULL, *fwd_dfa = NULL;
-  if (args.opts.onlymat && !args.opts.exact && !args.opts.count &&
-      !args.opts.list) {
-    nfa.initial->target->source = NULL, nfa.initial->target = NULL;
-    ltre_reverse(&nfa), rev_dfa = ltre_compile(nfa);
-    nfa.final->source->target = NULL, nfa.final->source = NULL;
-    ltre_reverse(&nfa), fwd_dfa = ltre_compile(nfa);
+
+  if (args.opts.ignore)
+    regex = regex_ignorecase(regex, false);
+  if (args.opts.onlymat && !args.opts.exact && !args.opts.invert &&
+      !args.opts.count && !args.opts.list) {
+    fwd_dfa = ltre_compile(regex_incref(regex));
+    rev_dfa = ltre_compile(regex_reverse(
+        regex_concat(REGEXES(regex_incref(regex), regex_univ()))));
   }
+  if (!args.opts.exact)
+    regex = regex_concat(REGEXES(regex_univ(), regex, regex_univ()));
+  if (args.opts.invert)
+    regex = regex_compl(regex);
+
+  struct dstate *dfa = ltre_compile(regex);
 
 #define OUTPUT_LINE                                                            \
   do {                                                                         \
     if (args.opts.count || args.opts.list)                                     \
       break;                                                                   \
     uint8_t *p, *begin = line, *end = nl;                                      \
-    if (args.opts.onlymat && !args.opts.exact) {                               \
+    if (args.opts.onlymat && !args.opts.exact && !args.opts.invert) {          \
       p = end; /* leftmost */                                                  \
       for (struct dstate *dstate = rev_dfa;                                    \
            dstate->accepting ? begin = p : 0, p > line;)                       \
@@ -259,6 +256,6 @@ int main(int argc, char **argv) {
     OUTPUT_FILE;
   }
 
-  nfa_free(nfa), dfa_free(dfa);
+  dfa_free(dfa);
   dfa_free(rev_dfa), dfa_free(fwd_dfa);
 }

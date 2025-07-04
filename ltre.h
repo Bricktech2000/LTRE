@@ -2,34 +2,41 @@
 #include <stddef.h>
 #include <stdint.h>
 
-struct dstate;
+struct regex *ltre_parse(char **pattern, char **error);
+struct regex *ltre_fixed_string(char *string);
+char *ltre_stringify(struct regex *regex);
 
-// `nstate`s support epsilon-transitions and therefore we can assume NFAs have
-// a unique final state without loss of generality. `initial` and `final` also
-// serve as the head and tail, respectively, of the `nstate.next` linked list,
-// which serves as an iterator over all states of the NFA
-struct nfa {
-  struct nstate *initial, *final;
-  // NFA complementation and reversal are performed lazily by flipping these
-  // flags, often saving us the trip through the compile pipeline. when this NFA
-  // is eventually compiled into a DFA by `ltre_compile`, they will be read by
-  // `dfa_step` when stepping through the NFA and when marking accepting states
-  bool complemented, reversed;
-};
+struct dstate *ltre_compile(struct regex *regex);
+bool ltre_matches(struct dstate *dfa, uint8_t *input);
+bool ltre_equivalent(struct dstate *dfa1, struct dstate *dfa2);
+struct regex *ltre_decompile(struct dstate *dfa);
 
-void nfa_free(struct nfa nfa);
+struct dstate *ltre_lazy_init(struct regex *regex);
+bool ltre_lazy_matches(struct dstate **dfap, uint8_t *input);
+
+typedef uint8_t symset_t[256 / 8];
+
 void dfa_free(struct dstate *dfa);
 uint8_t *dfa_serialize(struct dstate *dfa, size_t *size);
-struct dstate *dfa_deserialize(uint8_t *buf, size_t *size);
-struct nfa ltre_parse(char **regex, char **error);
-struct nfa ltre_fixed_string(char *string);
-void ltre_partial(struct nfa *nfa);
-void ltre_ignorecase(struct nfa *nfa);
-void ltre_complement(struct nfa *nfa);
-void ltre_reverse(struct nfa *nfa);
-struct dstate *ltre_compile(struct nfa nfa);
-struct nfa ltre_uncompile(struct dstate *dfa);
-char *ltre_decompile(struct dstate *dfa);
-bool ltre_matches(struct dstate *dfa, uint8_t *input);
-bool ltre_matches_lazy(struct dstate **dfap, struct nfa nfa, uint8_t *input);
-bool ltre_equivalent(struct dstate *dfa1, struct dstate *dfa2);
+struct dstate *dfa_deserialize(uint8_t *image, size_t *size);
+
+struct regex *regex_incref(struct regex *regex);
+struct regex *regex_decref(struct regex *regex);
+int regex_cmp(struct regex *regex1, struct regex *regex2);
+
+struct regex *regex_alt(struct regex *children[]);
+struct regex *regex_int(struct regex *children[]);
+struct regex *regex_compl(struct regex *child);
+struct regex *regex_concat(struct regex *children[]);
+struct regex *regex_repeat(struct regex *child, unsigned lower, unsigned upper);
+struct regex *regex_symset(symset_t *symset);
+struct regex *regex_empty(void);
+struct regex *regex_univ(void);
+struct regex *regex_eps(void);
+struct regex *regex_negeps(void);
+
+struct regex *regex_ignorecase(struct regex *regex, bool dual);
+struct regex *regex_reverse(struct regex *regex);
+struct regex *regex_derivate(struct regex *regex, uint8_t chr);
+
+#define REGEXES(...) ((struct regex *[]){__VA_ARGS__, NULL})

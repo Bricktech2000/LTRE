@@ -14,17 +14,16 @@ int main(void) {
     *nl = '\0', len = 0;
 
     char *error = NULL, *loc = line;
-    struct nfa nfa = ltre_parse(&loc, &error);
+    struct regex *regex = ltre_parse(&loc, &error);
     if (error) {
       fprintf(stderr, "parse error: %s near '%.16s'\n", error, loc);
       continue;
     }
 
-    ltre_complement(&nfa);
-    struct dstate *dfa = ltre_compile(nfa);
-    char *re = ltre_decompile(dfa);
-    puts(re);
-    nfa_free(nfa), dfa_free(dfa), free(re);
+    struct dstate *dfa = ltre_compile(regex_compl(regex));
+    char *pattern = ltre_stringify(ltre_decompile(dfa));
+    puts(pattern);
+    dfa_free(dfa), free(pattern);
   }
 
   if (!feof(stdin))
