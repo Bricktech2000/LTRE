@@ -7,18 +7,23 @@ struct regex *ltre_fixed_string(char *string);
 char *ltre_stringify(struct regex *regex);
 
 struct dstate *ltre_compile(struct regex *regex);
+struct dstate *ltre_determinize(struct regex *regex);
 bool ltre_matches(struct dstate *dfa, uint8_t *input);
-bool ltre_equivalent(struct dstate *dfa1, struct dstate *dfa2);
 struct regex *ltre_decompile(struct dstate *dfa);
 
-struct dstate *ltre_lazy_init(struct regex *regex);
-bool ltre_lazy_matches(struct dstate **dfap, uint8_t *input);
+struct dstate *dstate_alloc(struct regex *regex);
+bool ltre_matches_lazy(struct dstate **dfap, uint8_t *input);
 
 typedef uint8_t symset_t[256 / 8];
 
 void dfa_free(struct dstate *dfa);
+int dfa_get_size(struct dstate *dfa);
 uint8_t *dfa_serialize(struct dstate *dfa, size_t *size);
 struct dstate *dfa_deserialize(uint8_t *image, size_t *size);
+
+void dfa_optimize(struct dstate *dfa);
+void dfa_minimize(struct dstate *dfa);
+bool dfa_equivalent(struct dstate *dfa1, struct dstate *dfa2);
 
 struct regex *regex_incref(struct regex *regex);
 struct regex *regex_decref(struct regex *regex);
@@ -37,6 +42,6 @@ struct regex *regex_negeps(void);
 
 struct regex *regex_ignorecase(struct regex *regex, bool dual);
 struct regex *regex_reverse(struct regex *regex);
-struct regex *regex_derivate(struct regex *regex, uint8_t chr);
+struct regex *regex_differentiate(struct regex *regex, uint8_t chr);
 
 #define REGEXES(...) ((struct regex *[]){__VA_ARGS__, NULL})

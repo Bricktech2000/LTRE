@@ -33,7 +33,7 @@ int main(void) {
     }
 
     struct dstate *dfa1 = ltre_compile(regex1), *dfa2 = ltre_compile(regex2);
-    puts(ltre_equivalent(dfa1, dfa2) ? "equivalent" : "not equivalent");
+    puts(dfa_equivalent(dfa1, dfa2) ? "equivalent" : "not equivalent");
 
     dfa_free(dfa1), dfa_free(dfa2);
   }

@@ -20,10 +20,9 @@ void test(struct test args) {
   static struct test memo = {0};
   static struct dstate *dfa = NULL, *ldfa = NULL;
 
-  if (dfa && strcmp(memo.pattern, args.pattern) == 0 &&
+  if (memo.pattern && strcmp(memo.pattern, args.pattern) == 0 &&
       memcmp(&memo.errors, &args.errors, sizeof(bool[6])) == 0)
     goto check_matches;
-  memo = args;
 
   char *error = NULL, *loc = args.pattern;
   struct regex *regex = ltre_parse(&loc, &error);
@@ -35,6 +34,10 @@ void test(struct test args) {
 
   if (error)
     return;
+  if (args.errors) {
+    regex_decref(regex);
+    return;
+  }
 
   if (args.partial)
     regex = regex_concat(REGEXES(regex_univ(), regex, regex_univ()));
@@ -59,7 +62,7 @@ void test(struct test args) {
   uint8_t *image = dfa_serialize(dfa, &(size_t){0});
   clone = dfa, dfa = dfa_deserialize(image, &(size_t){0}), free(image);
 
-  if (!ltre_equivalent(dfa, clone))
+  if (!dfa_equivalent(dfa, clone))
     abort(); // invariant broken
   dfa_free(clone);
 
@@ -70,31 +73,34 @@ void test(struct test args) {
     regex = ltre_parse(&pattern, NULL), free(pattern);
     clone = dfa, dfa = ltre_compile(regex);
 
-    if (!ltre_equivalent(dfa, clone))
+    if (!dfa_equivalent(dfa, clone))
       abort(); // invariant broken
     dfa_free(clone);
   }
 
-  dfa_free(ldfa), ldfa = ltre_lazy_init(regex);
+  dfa_free(ldfa), ldfa = dstate_alloc(regex);
 
+  memo = args;
 check_matches:
   if (ltre_matches(dfa, (uint8_t *)args.input) != args.matches ||
-      ltre_lazy_matches(&ldfa, (uint8_t *)args.input) != args.matches)
+      ltre_matches_lazy(&ldfa, (uint8_t *)args.input) != args.matches)
     printf("test failed: /%s/ against '%s'\n", args.pattern, args.input);
 }
+
+// XXX update tests with new quant nesting
 
 int main(void) {
   // catastrophic backtracking
   test("(a*)*c", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", false);
   test("(x+x+)+y", "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", false);
 
+  // powerset construction state blowout
+  test("%0%|%1%|%2%|%3%|%4%|%5%", "", false);
+  test("%0%|%1%|%2%|%3%|%4%|%5%", "123", true);
+
   // determinization state blowout
   test("[01]*1[01]{8}", "11011100011100", true, .quick = true);
   test("[01]*1[01]{8}", "01010010010010", false, .quick = true);
-
-  // powerset construction state blowout
-  test(".*0.*|.*1.*|.*2.*|.*3.*|.*4.*|.*5.*", "", false);
-  test(".*0.*|.*1.*|.*2.*|.*3.*|.*4.*|.*5.*", "123", true);
 
   // potential edge cases
   test("abba", "abba", true);
@@ -128,7 +134,7 @@ int main(void) {
   test(" ", " ", true);
   test("", "\n", false);
   test("\\n", "\n", true);
-  test(".", "\n", false);
+  test(".", "\n", true);
   test("\\\\n", "\n", false);
   test("(|n)(\\n)", "\n", true);
   test("\\r?\\n", "\n", true);
@@ -201,7 +207,7 @@ int main(void) {
   test("", "", true, .ignorecase = true);
   test("abCdEF", "aBCdEf", true, .ignorecase = true);
   test("ab", "abc", false, .ignorecase = true);
-  test("~ab", "ab", true, .ignorecase = true);
+  test("!ab", "ab", true, .ignorecase = true);
   test("a", "", true, .complement = true);
   test("a", "aa", true, .complement = true);
   test("a", "a", false, .complement = true);
@@ -225,7 +231,7 @@ int main(void) {
   test("[a\\x]", .errors = true);
   test("\b", .errors = true);
   test("\t", .errors = true);
-  test("^^a", .errors = true);
+  test("~~a", .errors = true);
   test("a**", .errors = true);
   test("a*+", .errors = true);
   test("a*?", .errors = true);
@@ -242,49 +248,49 @@ int main(void) {
   test("a{" NAT_OVF "," NAT_OVF "}", .errors = true);
 
   // nonstandard features
-  test("^a", "z", true);
-  test("^a", "a", false);
-  test("^\\n", "\r", true);
-  test("^\\n", "\n", false);
-  test("^.", "\n", true);
-  test("^.", "a", false);
+  test("~a", "z", true);
+  test("~a", "a", false);
+  test("~\\n", "\r", true);
+  test("~\\n", "\n", false);
+  test("~.", "\n", false);
+  test("~.", "a", false);
   test("\\d+", "0123456789", true);
   test("\\s+", " \f\n\r\t\v", true);
-  test("\\w+", "azAZ09_", true);
-  test("^a-z*", "1A!2$B", true);
-  test("^a-z*", "1aA", false);
+  test("\\w+", "azAZ09", true);
+  test("~a-z*", "1A!2$B", true);
+  test("~a-z*", "1aA", false);
   test("a-z*", "abc", true);
-  test("^[\\d^\\w]+", "abcABC", true);
-  test("^[\\d^\\w]+", "abc123", false);
-  test("^[\\d\\W]+", "abcABC", true);
-  test("^[\\d^\\W]+", "abc123", false);
+  test("~[\\d~\\w]+", "abcABC", true);
+  test("~[\\d~\\w]+", "abc123", false);
+  test("~[\\d\\W]+", "abcABC", true);
+  test("~[\\d~\\W]+", "abc123", false);
   test("[[abc]]+", "abc", true);
   test("[a[bc]]+", "abc", true);
   test("[a[b]c]+", "abc", true);
   test("[a][b][c]", "abc", true);
-  test("^[^a^b]", "a", false);
-  test("^[^a^b]", "b", false);
-  test("^[^a^b]", "", false);
+  test("~[~a~b]", "a", false);
+  test("~[~a~b]", "b", false);
+  test("~[~a~b]", "", false);
   test("<ab>", "a", false);
   test("<ab>", "b", false);
   test("<ab>", "", false);
-  test("\\^", "^", true);
-  test("^\\^", "^", false);
-  test("^[^\\^]", "^", true);
-  test("^[ ^[a b c]]+", "abc", true);
-  test("^[ ^[a b c]]+", "a c", false);
-  test("<[a b c]^ >+", "abc", true);
-  test("<[a b c]^ >+", "a c", false);
-  test("^[^0-74]+", "0123567", true);
-  test("^[^0-74]+", "89", false);
-  test("^[^0-74]+", "4", false);
-  test("<0-7^4>+", "0123567", true);
-  test("<0-7^4>+", "89", false);
-  test("<0-7^4>+", "4", false);
+  test("\\~", "~", true);
+  test("~\\~", "~", false);
+  test("~[~\\~]", "~", true);
+  test("~[ ~[a b c]]+", "abc", true);
+  test("~[ ~[a b c]]+", "a c", false);
+  test("<[a b c]~ >+", "abc", true);
+  test("<[a b c]~ >+", "a c", false);
+  test("~[~0-74]+", "0123567", true);
+  test("~[~0-74]+", "89", false);
+  test("~[~0-74]+", "4", false);
+  test("<0-7~4>+", "0123567", true);
+  test("<0-7~4>+", "89", false);
+  test("<0-7~4>+", "4", false);
   test("[]", " ", false);
-  test("^[]", " ", true);
+  test("~[]", " ", true);
   test("<>", " ", true);
-  test("^<>", " ", false);
+  test("~<>", " ", false);
   test("9-0*", "abc", true);
   test("9-0*", "18", false);
   test("9-0*", "09", true);
@@ -305,51 +311,129 @@ int main(void) {
   test("a{}", "a", false);
   test("a{,}", "", true);
   test("a{,}", "a", true);
-  test("~", "", false);
-  test("~", "a", true);
-  test("~", "aa", true);
-  test("~0*", "", false);
-  test("~0*", "0", false);
-  test("~0*", "00", false);
-  test("~0*", "001", true);
+  test("a{2}+", "", false);
+  test("a{2}+", "a", false);
+  test("a{2}+", "aa", true);
+  test("a{2}+", "aaa", false);
+  test("a{2}+", "aaaa", true);
+  test("!", "", false);
+  test("!", "a", true);
+  test("!", "aa", true);
+  test("!0*", "", false);
+  test("!0*", "0", false);
+  test("!0*", "00", false);
+  test("!0*", "001", true);
   test("ab&cd", "", false);
   test("ab&cd", "ab", false);
   test("ab&cd", "cd", false);
-  test(".*a.*&...", "ab", false);
-  test(".*a.*&...", "abc", true);
-  test(".*a.*&...", "bcd", false);
+  test("%a%&...", "ab", false);
+  test("%a%&...", "bc", false);
+  test("%a%&...", "abc", true);
+  test("%a%&...", "bcd", false);
+  test("%a%=...", "ab", false);
+  test("%a%=...", "bc", true);
+  test("%a%=...", "abc", true);
+  test("%a%=...", "bcd", false);
   test("a&b|c", "a", false);
   test("a&b|c", "b", false);
   test("a&b|c", "c", false);
   test("a|b&c", "a", true);
   test("a|b&c", "b", false);
   test("a|b&c", "c", false);
-  test("\\w+&~\\d+", "", false);
-  test("\\w+&~\\d+", "abc", true);
-  test("\\w+&~\\d+", "abc123", true);
-  test("\\w+&~\\d+", "1a2b3c", true);
-  test("\\w+&~\\d+", "123", false);
-  test("0x(~[0-9a-f]+)", "0yz", false);
-  test("0x(~[0-9a-f]+)", "0x12", false);
-  test("0x(~[0-9a-f]+)", "0x", true);
-  test("0x(~[0-9a-f]+)", "0xy", true);
-  test("0x(~[0-9a-f]+)", "0xyz", true);
-  test("b(~a*)", "", false);
-  test("b(~a*)", "b", false);
-  test("b(~a*)", "ba", false);
-  test("b(~a*)", "bbaa", true);
-  test("a*(~)", "", false);
-  test("a*(~)", "a", true);
-  test("a*(~)", "bc", true);
-  test("(~)*", "", true);
-  test("(~)*", "a", true);
-  test("(~)*", "ab", true);
-  test("(~)+", "", false);
-  test("(~)+", "a", true);
-  test("(~)+", "ab", true);
-  test("(~)?", "", true);
-  test("(~)?", "a", true);
-  test("(~)?", "ab", true);
+  test("\\w+&!\\d+", "", false);
+  test("\\w+&!\\d+", "abc", true);
+  test("\\w+&!\\d+", "abc123", true);
+  test("\\w+&!\\d+", "1a2b3c", true);
+  test("\\w+&!\\d+", "123", false);
+  test("0x(![0-9a-f]+)", "0yz", false);
+  test("0x(![0-9a-f]+)", "0x12", false);
+  test("0x(![0-9a-f]+)", "0x", true);
+  test("0x(![0-9a-f]+)", "0xy", true);
+  test("0x(![0-9a-f]+)", "0xyz", true);
+  test("a!b", "", false);
+  test("a!b", "a", true);
+  test("a!b", "b", false);
+  test("a!b", "aa", false);
+  test("\\w{3}+!\\s+", "", false);
+  test("\\w{3}+!\\s+", "foo", true);
+  test("\\w{3}+!\\s+", "foo bar", true);
+  test("\\w{3}+!\\s+", "foobar", false);
+  test("\\w{3}+!\\s+", "foo\nbar\rbaz", true);
+  test("\\w{3}+!\\s+", "john", false);
+  test("\\w{3}+!\\s+", "john doe", false);
+  test("(0|1-90-9*)*!\\s+", "", true);
+  test("(0|1-90-9*)*!\\s+", "0", true);
+  test("(0|1-90-9*)*!\\s+", "0 ", false);
+  test("(0|1-90-9*)*!\\s+", "123", true);
+  test("(0|1-90-9*)*!\\s+", "1\t2 3", true);
+  test("(0|1-90-9*)*!\\s+", "012", false);
+  test("(0|1-90-9*)*!\\s+", "0 1\n2", true);
+  test(":a", "", true);
+  test(":a", "a", false);
+  test(":a", "ab", false);
+  test("a:", "", true);
+  test("a:", "a", false);
+  test("a:", "ab", false);
+  test(":", "", true);
+  test(":", "a", true);
+  test(":", "ab", false);
+  test(":(!/):0*", "/2", true);
+  test(":(!/):0*", "1/0", true);
+  test(":(!/):0*", "1/2", false);
+  test(":(!/):0*", "1/", true);
+  test(":(!/):0*", "2/1/0", false);
+  test(":(!/):0*", "1/00", true);
+  test(":(!/):0*", "0/2", false);
+  test(":(!/):0*", "a/b", false);
+  test(":(!/):0*", "a-b", true);
+  test("0?:{3}", "00", true);
+  test("0?:{3}", "10", true);
+  test("0?:{3}", "12", true);
+  test("0?:{3}", "000", true);
+  test("0?:{3}", "120", true);
+  test("0?:{3}", "003", true);
+  test("0?:{3}", "123", false);
+  test("0?:{3}", "0000", true);
+  test("0?:{3}", "0001", true);
+  test("0?:{3}", "0021", false);
+  test("0?:{3}", "00000", true);
+  test("0?:{3}", "03000", true);
+  test("0?:{3}", "20000", false);
+  test("0?:{3}", "000000", false);
+  test("0?:{3}", "001000", false);
+  test("(a-z*0-9*):?", "", false);
+  test("(a-z*0-9*):?", "b", true);
+  test("(a-z*0-9*):?", "2", true);
+  test("(a-z*0-9*):?", "c3", true);
+  test("(a-z*0-9*):?", "4d", false);
+  test("(a-z*0-9*):?", "ee56", true);
+  test("(a-z*0-9*):?", "f6g", false);
+  test("(%\\W%|\\d%)?:*!\\.", "", false);
+  test("(%\\W%|\\d%)?:*!\\.", "a", false);
+  test("(%\\W%|\\d%)?:*!\\.", "a2", false);
+  test("(%\\W%|\\d%)?:*!\\.", "2a", true);
+  test("(%\\W%|\\d%)?:*!\\.", "2", true);
+  test("(%\\W%|\\d%)?:*!\\.", "a.b", false);
+  test("(%\\W%|\\d%)?:*!\\.", "a.b.", true);
+  test("(%\\W%|\\d%)?:*!\\.", "a..b", true);
+  test("(%\\W%|\\d%)?:*!\\.", "a0b.c1.d", false);
+  test("(%\\W%|\\d%)?:*!\\.", "a0c.d1.2", true);
+  test("b(!a*)", "", false);
+  test("b(!a*)", "b", false);
+  test("b(!a*)", "ba", false);
+  test("b(!a*)", "bbaa", true);
+  test("a*(!)", "", false);
+  test("a*(!)", "a", true);
+  test("a*(!)", "bc", true);
+  test("(!)*", "", true);
+  test("(!)*", "a", true);
+  test("(!)*", "ab", true);
+  test("(!)+", "", false);
+  test("(!)+", "a", true);
+  test("(!)+", "ab", true);
+  test("(!)?", "", true);
+  test("(!)?", "a", true);
+  test("(!)?", "ab", true);
   test("abc>", .errors = true);
   test("<abc", .errors = true);
   test("[a?b]", .errors = true);
@@ -371,19 +455,19 @@ int main(void) {
   test("a{1 2}", .errors = true);
   test("a{1, 2}", .errors = true);
   test("a{a}", .errors = true);
-  test("~~a", .errors = true);
-  test("a~b", .errors = true);
+  test("!!a", .errors = true);
+  test("a!!b", .errors = true);
 
   // realistic regexes
-#define HEX_RGB "#([0-9a-fA-F]{3}){1,2}"
+#define HEX_RGB "#[0-9a-fA-F]{3}{1,2}"
   test(HEX_RGB, "000", false);
   test(HEX_RGB, "#0aA", true);
   test(HEX_RGB, "#00ff", false);
   test(HEX_RGB, "#abcdef", true);
   test(HEX_RGB, "#abcdeff", false);
   // ISO/IEC 9899:TC3, $6.4.9 'Comments'
-#define BLOCK_COMMENT "/\\*(~<>*\\*/<>*)\\*/"
-#define LINE_COMMENT "//^\\n*\\n"
+#define BLOCK_COMMENT "/\\*(!%\\*/%)\\*/"
+#define LINE_COMMENT "//~\\n*\\n"
 #define COMMENT BLOCK_COMMENT "|" LINE_COMMENT
   test(COMMENT, "// */\n", true);
   test(COMMENT, "// //\n", true);
@@ -401,7 +485,7 @@ int main(void) {
   // see also gcc-14/gcc/c-family/c-format.cc:713 'print_char_table'
   // and gcc-14/gcc/c-family/c-format.h:25 'enum format_lengths'
 #define FIELD_WIDTH "(\\*|1-90-9*)?"
-#define PRECISION "(\\.(\\*|1-90-9*)?)?"
+#define PRECISION "(\\." FIELD_WIDTH ")?"
 #define DI "[\\-\\+ 0]*" FIELD_WIDTH PRECISION "(hh|ll|[hljzt])?[di]"
 #define U "[\\-0]*" FIELD_WIDTH PRECISION "(hh|ll|[hljzt])?u"
 #define OX "[\\-#0]*" FIELD_WIDTH PRECISION "(hh|ll|[hljzt])?[oxX]"
@@ -410,7 +494,8 @@ int main(void) {
 #define S "\\-*" FIELD_WIDTH PRECISION "l?s"
 #define P "\\-*" FIELD_WIDTH "p"
 #define N FIELD_WIDTH "(hh|ll|[hljzt])?n"
-#define CONV_SPEC "%(" DI "|" U "|" OX "|" FEGA "|" C "|" S "|" P "|" N "|%)"
+#define CONV_SPEC                                                              \
+  "\\%(" DI "|" U "|" OX "|" FEGA "|" C "|" S "|" P "|" N "|\\%)"
   test(CONV_SPEC, "%", false);
   test(CONV_SPEC, "%*", false);
   test(CONV_SPEC, "%%", true);
@@ -421,6 +506,8 @@ int main(void) {
   test(CONV_SPEC, "%5p", true);
   test(CONV_SPEC, "d", false);
   test(CONV_SPEC, "%d", true);
+  test(CONV_SPEC, "%*d", true);
+  test(CONV_SPEC, "%**d", false);
   test(CONV_SPEC, "%.16s", true);
   test(CONV_SPEC, "% 5.3f", true);
   test(CONV_SPEC, "%*32.4g", false);
@@ -442,7 +529,7 @@ int main(void) {
   test(CONV_SPEC, "%0-++ 0i", true);
   test(CONV_SPEC, "%30c", true);
   test(CONV_SPEC, "%03c", false);
-#define PRINTF_FMT "(^%|" CONV_SPEC ")*"
+#define PRINTF_FMT "(~\\%|" CONV_SPEC ")*"
   test(PRINTF_FMT, "%", false);
   test(PRINTF_FMT, "%*", false);
   test(PRINTF_FMT, "%%", true);
@@ -460,9 +547,8 @@ int main(void) {
   "float|for|goto|if|inline|int|long|register|restrict|return|short|signed|"   \
   "sizeof|static|struct|switch|typedef|union|unsigned|void|volatile|while|"    \
   "_Bool|_Complex|_Imaginary)"
-#define HEX_QUAD "[0-9a-fA-F]{4}"
 #define IDENTIFIER                                                             \
-  "(\\w|\\\\u" HEX_QUAD "|\\\\U" HEX_QUAD HEX_QUAD ")+&~\\d.*&~" KEYWORD
+  "(_|\\w|\\\\u[0-9a-fA-F]{4}|\\\\U[0-9a-fA-F]{8})+&!\\d%&!" KEYWORD
   test(IDENTIFIER, "", false);
   test(IDENTIFIER, "_", true);
   test(IDENTIFIER, "_foo", true);
@@ -487,9 +573,8 @@ int main(void) {
   // and so really accepts a superset of UTF-8-encoded JSON strings. also, the
   // RFC points out that the grammar would allow string values that are invalid
   // Unicode, but doesn't elaborate, so I guess we can let those through too?
-#define HEX_QUAD "[0-9a-fA-F]{4}"
 #define JSON_STR                                                               \
-  "\"(^[\\x00-\\x1f\"\\\\]|\\\\[\"\\\\/bfnrt]|\\\\u" HEX_QUAD ")*\""
+  "\"(~[\\x00-\\x1f\"\\\\]|\\\\[\"\\\\/bfnrt]|\\\\u[0-9a-fA-F]{4})*\""
   test(JSON_STR, "foo", false);
   test(JSON_STR, "\"foo", false);
   test(JSON_STR, "foo \"bar\"", false);
@@ -529,6 +614,7 @@ int main(void) {
   test(JSON_NUM, "1e-0", true);
   test(JSON_NUM, "1E10", true);
   test(JSON_NUM, "1e+00", true);
+  // RFC 8259, $3 'Values'
 #define JSON_BOOL "true|false"
 #define JSON_NULL "null"
 #define JSON_PRIM JSON_STR "|" JSON_NUM "|" JSON_BOOL "|" JSON_NULL
@@ -548,10 +634,10 @@ int main(void) {
 #define BYTE_PAT                                                               \
   "(\\x00-\\x7f|\\xc0-\\xdf" TAIL "|\\xe0-\\xef" TAIL TAIL                     \
   "|\\xf0-\\xf7" TAIL TAIL TAIL ")"
-#define OVERLONG "(\\xc0-\\xc1<>|\\xe0\\x80-\\x9f<>|\\xf0\\x80-\\x8f<><>)"
-#define SURROGATE "\\xed\\xa0-\\xbf<>"
+#define OVERLONG "(\\xc0-\\xc1.|\\xe0\\x80-\\x9f.|\\xf0\\x80-\\x8f..)"
+#define SURROGATE "\\xed\\xa0-\\xbf."
 #define TOO_BIG "(\\xf4\\x90-\\xff" TAIL TAIL "|\\xf5-\\xff" TAIL TAIL TAIL ")"
-#define UTF8_CHAR_1 "(" BYTE_PAT "&~" OVERLONG "&~" SURROGATE "&~" TOO_BIG ")"
+#define UTF8_CHAR_1 "(" BYTE_PAT "&!" OVERLONG "&!" SURROGATE "&!" TOO_BIG ")"
   // RFC 3629, $4 'Syntax of UTF-8 Byte Sequences'. direct transcription of ABNF
 #define TAIL "\\x80-\\xbf"
 #define UTF8_1 "\\x00-\\x7f"
