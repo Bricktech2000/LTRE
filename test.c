@@ -629,6 +629,46 @@ int main(void) {
   test(JSON_PRIM, "-5.6e2", true);
   test(JSON_PRIM, "\"1a\\n\"", true);
   test(JSON_PRIM, "\"1a\\n\" ", false);
+  // RFC 8259, $5 'Arrays'
+#define JSON_ARR(JSON_VAL) WS("\\[") JSON_VAL "*!" WS(",") WS("\\]")
+  // RFC 8259, $4 'Objects'
+#define JSON_OBJ(JSON_VAL)                                                     \
+  WS("\\{") "(" JSON_STR WS("\\:") JSON_VAL ")*!" WS(",") WS("\\}")
+  // RFC 8259, $2 'JSON Grammar'. JSON texts are not a regular language because
+  // structured types are self-referencial. these macros are written in such a
+  // way that `#define JSON_TEXT WS(FIX(JSON_VAL))` would recognize all JSON
+  // texts, but we don't have a fixed-point combinator for C macros, so instead
+  // we manually unroll it a few times around the base case `"(" JSON_PRIM ")"`
+#define JSON_STRUC(JSON_VAL) JSON_ARR(JSON_VAL) "|" JSON_OBJ(JSON_VAL)
+#define JSON_VAL(JSON_VAL) "(" JSON_PRIM "|" JSON_STRUC(JSON_VAL) ")"
+#define JSON_TEXT WS(JSON_VAL(JSON_VAL("(" JSON_PRIM ")")))
+#define WS(FACTOR) "[ \\t\\n\\r]*{2}!" FACTOR
+  // test cases taken from JSONW's readme
+  test(JSON_TEXT, "null", true);
+  test(JSON_TEXT, " 123\t", true);
+  test(JSON_TEXT, "[1, 2, 3]", true);
+  test(JSON_TEXT, "true false", false);
+  test(JSON_TEXT, "[1, 2, 3,]", false);
+  test(JSON_TEXT, "{ num: 123 }", false);
+  test(JSON_TEXT, "[\"foo\", { \"bar\": 123 }, [true]]", true);
+  test(JSON_TEXT, "[\"foo\", { \"bar\": 123 }, [true], baz]", false);
+  test(JSON_TEXT, "{ \"null\": null, \"true\": true, \"\\\"str\\\"\": \"str\"}",
+       true);
+  test(JSON_TEXT, "{ \"a\": 0.1, \"b\": 0.2, \"a\": 0.3 }", true);
+  test(JSON_TEXT, "[\"abc\", \"\\u0000\", \"ab\\u0000c\"]", true);
+  test(JSON_TEXT,
+       "{ \"size\": { \"width\": 800, \"height\": 600, \"depth\": 4 } }", true);
+  test(JSON_TEXT, "{ \"size\": { \"width\": \"800\", \"height\": 600 } }",
+       true);
+  test(JSON_TEXT, "{ \"size\": [] }", true);
+  test(JSON_TEXT, "[\"foo\", \"bar\"]", true);
+  test(JSON_TEXT, "{ \"name\": \"John\", \"birth\": 1978 }", true);
+  test(JSON_TEXT, "{ \"birth\": 2010 }", true);
+  test(JSON_TEXT, "false", true);
+  test(JSON_TEXT, "[]", true);
+  test(JSON_TEXT, "{ \"name\": \"too long!\" }", true);
+  test(JSON_TEXT, "{ \"birth\": 1.2 }", true);
+  test(JSON_TEXT, "42", true);
   // RFC 3629, $3 'UTF-8 definition'. derived from the plain English definition
 #define TAIL "\\x80-\\xbf"
 #define BYTE_PAT                                                               \
@@ -686,4 +726,69 @@ int main(void) {
   test(UTF8_CHARS_SOME, "\xc2\x7f", false);     // bad tail
   test(UTF8_CHARS_SOME, "\xe2\x28\xa1", false); // bad tail
   test(UTF8_CHARS_SOME, "\x80x/", false);
+  // minimal DFA over the alphabet '0-1' for the regular expression /1[10]*0/
+#define FA_PATH(TRANS) "A-Z+!0-1&[]:(!A-Z{2}!0-1|" TRANS "):[]"
+#define ACCEPT FA_PATH("A1B|A0D|D[01]D|[BC]1B|[BC]0C") "&A%%[C]"
+#define REJECT FA_PATH("A1B|A0D|D[01]D|[BC]1B|[BC]0C") "&A%~[C]"
+  test(ACCEPT, "A0D", false);
+  test(ACCEPT, "A0C", false);
+  test(ACCEPT, "A5B", false);
+  test(ACCEPT, "A1B", false);
+  test(ACCEPT, "A1B0C", true);
+  test(ACCEPT, "A1B1B0C0C", true);
+  test(ACCEPT, "B1B0C", false);
+  test(REJECT, "A0D", true);
+  test(REJECT, "A0C", false);
+  test(REJECT, "A5B", false);
+  test(REJECT, "A1B", true);
+  test(REJECT, "A1B0C", false);
+  test(REJECT, "A1B1B0C0C", false);
+  test(REJECT, "B1B0C", false);
+  // year/month and month/year dates that can be parsed unambiguously, mainly
+  // to showcase an exclusive-or operation on regular expressions
+#define YEAR "(\\d{4}|[05-9]\\d)"
+#define MONTH "(0?1-9|10-2)"
+#define UNAMBIGUOUS YEAR "/" MONTH "=!" MONTH "/" YEAR
+  test(UNAMBIGUOUS, "3/98", true);
+  test(UNAMBIGUOUS, "05/98", true);
+  test(UNAMBIGUOUS, "10/98", true);
+  test(UNAMBIGUOUS, "98/12", true);
+  test(UNAMBIGUOUS, "98/13", false);
+  test(UNAMBIGUOUS, "98/17", false);
+  test(UNAMBIGUOUS, "07/55", true);
+  test(UNAMBIGUOUS, "07/14", false);
+  test(UNAMBIGUOUS, "07/1914", true);
+  test(UNAMBIGUOUS, "07/2014", true);
+  test(UNAMBIGUOUS, "3/2", false);
+  test(UNAMBIGUOUS, "3/02", true);
+  test(UNAMBIGUOUS, "03/2", true);
+  test(UNAMBIGUOUS, "03/02", false);
+  test(UNAMBIGUOUS, "03/2002", true);
+  test(UNAMBIGUOUS, "2003/02", true);
+  test(UNAMBIGUOUS, "11/12", false);
+  test(UNAMBIGUOUS, "2011/12", true);
+  test(UNAMBIGUOUS, "11/2012", true);
+  // constructed by state removal on the minimal 3-state DFA over the alphabet
+  // '0-9'. test cases are random numbers 1..1e12, logarithmically distributed
+#define DIV_BY_3                                                               \
+  "([0369]|[147][0369]*[258]|(([258]|[147][0369]*[147])"                       \
+  "([0369]|[258][0369]*[147])*([147]|[258][0369]*[258])))*"
+  test(DIV_BY_3, "", true);
+  test(DIV_BY_3, "3", true);
+  test(DIV_BY_3, "4818", true);
+  test(DIV_BY_3, "756", true);
+  test(DIV_BY_3, "146", false);
+  test(DIV_BY_3, "446127512", false);
+  test(DIV_BY_3, "24641410726", false);
+  test(DIV_BY_3, "6012627460", false);
+  test(DIV_BY_3, "91564250", false);
+  test(DIV_BY_3, "2308562", false);
+  test(DIV_BY_3, "76", false);
+  test(DIV_BY_3, "2222530", false);
+  test(DIV_BY_3, "18", true);
+  test(DIV_BY_3, "10361335", false);
+  test(DIV_BY_3, "1374", true);
+  test(DIV_BY_3, "70", false);
+  test(DIV_BY_3, "26054309489", false);
+  test(DIV_BY_3, "124859573097", true);
 }
