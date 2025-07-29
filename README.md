@@ -17,7 +17,7 @@ LTRE is a regular expression library written in C99 that has no dependencies but
                            ltre_matches_lazy                ltre_matches
 ```
 
-For sample regular expressions, see the test suite [test.c](test.c). For a more realistic use-case, see the small command-line search tool [ltrep.c](ltrep.c). For demos of of DFA decompilation and equivalence, see the regex complementation tool [compl.c](compl.c) and the regex equivalence tool [equiv.c](equiv.c).
+For sample regular expressions, see the test suite [test.c](test.c). For a more realistic use-case, see the small command-line search tool [ltrep.c](ltrep.c). For demos of of DFA decompilation and equivalence, see the regex complementation tool [compl.c](compl.c) and the regex equivalence tool [equiv.c](equiv.c). For generating matching strings from a regular expression, see the string synthesis tool [synth.c](synth.c).
 
 ## Usage
 
@@ -52,6 +52,16 @@ To build and run the regex equivalence tool:
 make bin/equiv
 echo -e '0-9+&!0.+\t0|1-90-9*' | bin/equiv # equivalent
 echo -e '(a+b*)*\t(a*b+)*' | bin/equiv # not equivalent
+```
+
+To build and run the string synthesis tool:
+
+```sh
+make bin/synth
+echo '0' | bin/synth '0|1+' # 0
+echo '1' | bin/synth '0|1+' | head -c 256 # 111...
+bin/synth '((0{2}!1){2}!2){2}!3' # 010201030102010
+# use `stty -icanon -echo -nl` for interactive use
 ```
 
 ## Syntax and Semantics

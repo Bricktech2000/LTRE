@@ -14,6 +14,9 @@ bin/compl: compl.c bin/ltre.o | bin/
 bin/equiv: equiv.c bin/ltre.o | bin/
 	$(CC) $(CFLAGS) $^ -o $@
 
+bin/synth: synth.c bin/ltre.o | bin/
+	$(CC) $(CFLAGS) $^ -o $@
+
 bin/test: test.c bin/ltre.o | bin/
 	$(CC) $(CFLAGS) -Wno-missing-field-initializers $^ -o $@
 
