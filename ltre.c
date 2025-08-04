@@ -414,9 +414,30 @@ struct regex *regex_repeat(struct regex *child, unsigned lower,
       return regex_decref(child), regex_univ(); // .* |- %
     else if (lower == 1)
       return regex_decref(child), regex_negeps(); // .+ |- (!)
-
-  // XXX nested repeats form an algebraic structure... something stronger than a
-  // monoid, weaker than a group. what can we do with that?
+  // claim: if M=N or (n-m)M+1 >= m then r{m,n}{M,N} |- r{mM,nN}
+  // proof: the lowest attainable count is mM and the greatest is nN. we need to
+  // show that every count in [mM, nN] is attainable. for any fixed K in [M, N],
+  // the counts [mK, nK] are attainable by iterating the inner quantifier. the
+  // union of these intervals will cover [mM, nN] if successive intervals are
+  // adjacent or overlapping, that is, if nK+1 >= m(K+1) for all K in [M, N-1].
+  // rearranging, we require (n-m)K+1 >= m for all K in [M, N-1]. the left-hand
+  // side of the inequality is increasing in K, so if it holds for K=M it will
+  // hold for all K in [M, N-1]. when M=N, the statement holds trivially; when
+  // (n-m)M+1 >= m, the inequality holds for K=M.
+  if (child->type == TYPE_REPEAT &&
+      (upper == lower || child->upper == UINT_MAX ||
+       (child->upper - child->lower) * lower + 1 >= child->lower)) {
+    bool bounded = upper != UINT_MAX && child->upper != UINT_MAX;
+    // don't merge if the resulting bounds would overflow
+    if (child->lower <= UINT_MAX / lower &&
+        (!bounded || child->upper <= UINT_MAX / upper)) {
+      lower = child->lower * lower;
+      upper = bounded ? child->upper * upper : UINT_MAX;
+      struct regex *repeat = regex_repeat_prev(
+          child, regex_incref(*child->children), lower, upper);
+      return regex_decref(child), repeat;
+    }
+  }
 
   bool nullable = lower == 0 || child->nullable;
 
