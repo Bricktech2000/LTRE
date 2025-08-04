@@ -87,11 +87,9 @@ check_matches:
     printf("test failed: /%s/ against '%s'\n", args.pattern, args.input);
 }
 
-// XXX update tests with new quant nesting
-
 int main(void) {
   // catastrophic backtracking
-  test("(a*)*c", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", false);
+  test("a**c", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", false);
   test("(x+x+)+y", "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", false);
 
   // powerset construction state blowout
@@ -131,7 +129,6 @@ int main(void) {
   test("()", "a", false);
   test("a()", "a", true);
   test("()a", "a", true);
-  test(" ", " ", true);
   test("", "\n", false);
   test("\\n", "\n", true);
   test(".", "\n", true);
@@ -139,9 +136,9 @@ int main(void) {
   test("(|n)(\\n)", "\n", true);
   test("\\r?\\n", "\n", true);
   test("\\r?\\n", "\r\n", true);
-  test("(a*)*", "a", true);
-  test("(a+)+", "aa", true);
-  test("(a?)?", "", true);
+  test("a**", "a", true);
+  test("a++", "aa", true);
+  test("a??", "", true);
   test("a+", "aa", true);
   test("a?", "aa", false);
   test("(a+)?", "aa", true);
@@ -219,6 +216,40 @@ int main(void) {
   test("a*b", "ba", true, .reverse = true);
   test("a*b", "ab", false, .reverse = true);
 
+  // shorthands
+  // we partition \x00-\xff into subranges for which all "ctype.h" functions
+  // plus `isascii` have a constant truth value. the test strings consist of
+  // a pair of representatives for each such subrange, namely the maximal and
+  // minimal elements; when they are the same, like with ' ', one is omitted
+  test("<>*", "\1\x08\t\n\r\x0e\x1f !/09:@AFGZ[`afgz{~\x7f\x80\xff", true);
+  test("%[]%", "\1\x08\t\n\r\x0e\x1f !/09:@AFGZ[`afgz{~\x7f\x80\xff", false);
+  test("\\m*", "09AFGZafgz", true);
+  test("%\\m%", "\1\x08\t\n\r\x0e\x1f !/:@[`{~\x7f\x80\xff", false);
+  test("\\a*", "AFGZafgz", true);
+  test("%\\a%", "\1\x08\t\n\r\x0e\x1f !/09:@[`{~\x7f\x80\xff", false);
+  test("\\k*", "\t ", true);
+  test("%\\k%", "\1\x08\n\r\x0e\x1f!/09:@AFGZ[`afgz{~\x7f\x80\xff", false);
+  test("\\c*", "\1\x08\n\r\x0e\x1f\x7f", true);
+  test("%\\c%", " !/09:@AFGZ[`afgz{~\x80\xff", false);
+  test("\\d*", "09", true);
+  test("%\\d%", "\1\x08\t\n\r\x0e\x1f !/:@AFGZ[`afgz{~\x7f\x80\xff", false);
+  test("\\g*", "!/09:@AFGZ[`afgz{~", true);
+  test("%\\g%", "\1\x08\t\n\r\x0e\x1f \x7f\x80\xff", false);
+  test("\\l*", "afgz", true);
+  test("%\\l%", "\1\x08\t\n\r\x0e\x1f !/09:@AFGZ[`{~\x7f\x80\xff", false);
+  test("\\p*", " !/09:@AFGZ[`afgz{~", true);
+  test("%\\p%", "\1\x08\t\n\r\x0e\x1f\x7f\x80\xff", false);
+  test("\\q*", "!/:@[`{~", true);
+  test("%\\q%", "\1\x08\t\n\r\x0e\x1f 09AFGZafgz\x7f\x80\xff", false);
+  test("\\s*", "\t\n\r ", true);
+  test("%\\s%", "\1\x08\x0e\x1f!/09:@AFGZ[`afgz{~\x7f\x80\xff", false);
+  test("\\u*", "AFGZ", true);
+  test("%\\u%", "\1\x08\t\n\r\x0e\x1f !/09:@[`afgz{~\x7f\x80\xff", false);
+  test("\\h*", "09AFaf", true);
+  test("%\\h%", "\1\x08\t\n\r\x0e\x1f !/:@GZ[`gz{~\x7f\x80\xff", false);
+  test("\\z*", "\1\x08\t\n\r\x0e\x1f !/09:@AFGZ[`afgz{~\x7f", true);
+  test("%\\z%", "\x80\xff", false);
+
   // parse errors
   test("abc]", .errors = true);
   test("[abc", .errors = true);
@@ -226,21 +257,13 @@ int main(void) {
   test("(abc", .errors = true);
   test("+a", .errors = true);
   test("a|*", .errors = true);
+  test("\\", .errors = true);
   test("\\x0", .errors = true);
-  test("\\zzz", .errors = true);
+  test("\\yyy", .errors = true);
   test("[a\\x]", .errors = true);
+  test("\a", .errors = true);
   test("\b", .errors = true);
-  test("\t", .errors = true);
   test("~~a", .errors = true);
-  test("a**", .errors = true);
-  test("a*+", .errors = true);
-  test("a*?", .errors = true);
-  test("a+*", .errors = true);
-  test("a++", .errors = true);
-  test("a+?", .errors = true);
-  test("a?*", .errors = true);
-  test("a?+", .errors = true);
-  test("a??", .errors = true);
 #define NAT_OVF "9999999999999999999999999999999999999999"
   test("a{" NAT_OVF "}", .errors = true);
   test("a{" NAT_OVF ",}", .errors = true);
@@ -254,16 +277,13 @@ int main(void) {
   test("~\\n", "\n", false);
   test("~.", "\n", false);
   test("~.", "a", false);
-  test("\\d+", "0123456789", true);
-  test("\\s+", " \f\n\r\t\v", true);
-  test("\\w+", "azAZ09", true);
   test("~a-z*", "1A!2$B", true);
   test("~a-z*", "1aA", false);
   test("a-z*", "abc", true);
-  test("~[\\d~\\w]+", "abcABC", true);
-  test("~[\\d~\\w]+", "abc123", false);
-  test("~[\\d\\W]+", "abcABC", true);
-  test("~[\\d~\\W]+", "abc123", false);
+  test("~[\\d~\\m]+", "abcABC", true);
+  test("~[\\d~\\m]+", "abc123", false);
+  test("~[\\d\\M]+", "abcABC", true);
+  test("~[\\d~\\M]+", "abc123", false);
   test("[[abc]]+", "abc", true);
   test("[a[bc]]+", "abc", true);
   test("[a[b]c]+", "abc", true);
@@ -277,10 +297,10 @@ int main(void) {
   test("\\~", "~", true);
   test("~\\~", "~", false);
   test("~[~\\~]", "~", true);
-  test("~[ ~[a b c]]+", "abc", true);
-  test("~[ ~[a b c]]+", "a c", false);
-  test("<[a b c]~ >+", "abc", true);
-  test("<[a b c]~ >+", "a c", false);
+  test("~[_~[a_b_c]]+", "abc", true);
+  test("~[_~[a_b_c]]+", "a_c", false);
+  test("<[a_b_c]~_>+", "abc", true);
+  test("<[a_b_c]~_>+", "a_c", false);
   test("~[~0-74]+", "0123567", true);
   test("~[~0-74]+", "89", false);
   test("~[~0-74]+", "4", false);
@@ -340,34 +360,39 @@ int main(void) {
   test("a|b&c", "a", true);
   test("a|b&c", "b", false);
   test("a|b&c", "c", false);
-  test("\\w+&!\\d+", "", false);
-  test("\\w+&!\\d+", "abc", true);
-  test("\\w+&!\\d+", "abc123", true);
-  test("\\w+&!\\d+", "1a2b3c", true);
-  test("\\w+&!\\d+", "123", false);
-  test("0x(![0-9a-f]+)", "0yz", false);
-  test("0x(![0-9a-f]+)", "0x12", false);
-  test("0x(![0-9a-f]+)", "0x", true);
-  test("0x(![0-9a-f]+)", "0xy", true);
-  test("0x(![0-9a-f]+)", "0xyz", true);
+  test("\\m+&!\\d+", "", false);
+  test("\\m+&!\\d+", "abc", true);
+  test("\\m+&!\\d+", "abc123", true);
+  test("\\m+&!\\d+", "1a2b3c", true);
+  test("\\m+&!\\d+", "123", false);
+  test("0x(!\\h+)", "0yz", false);
+  test("0x(!\\h+)", "0x12", false);
+  test("0x(!\\h+)", "0x", true);
+  test("0x(!\\h+)", "0xy", true);
+  test("0x(!\\h+)", "0xyz", true);
+  test("0x(%\\H%|)", "0yz", false);
+  test("0x(%\\H%|)", "0x12", false);
+  test("0x(%\\H%|)", "0x", true);
+  test("0x(%\\H%|)", "0xy", true);
+  test("0x(%\\H%|)", "0xyz", true);
   test("a!b", "", false);
   test("a!b", "a", true);
   test("a!b", "b", false);
   test("a!b", "aa", false);
-  test("\\w{3}+!\\s+", "", false);
-  test("\\w{3}+!\\s+", "foo", true);
-  test("\\w{3}+!\\s+", "foo bar", true);
-  test("\\w{3}+!\\s+", "foobar", false);
-  test("\\w{3}+!\\s+", "foo\nbar\rbaz", true);
-  test("\\w{3}+!\\s+", "john", false);
-  test("\\w{3}+!\\s+", "john doe", false);
+  test("\\m{3}+!\\s+", "", false);
+  test("\\m{3}+!\\s+", "foo", true);
+  test("\\m{3}+!\\s+", "foo bar", true);
+  test("\\m{3}+!\\s+", "foobar", false);
+  test("\\m{3}+!\\s+", "foo\nbar\rbaz", true);
+  test("\\m{3}+!\\s+", "john", false);
+  test("\\m{3}+!\\s+", "john doe", false);
   test("(0|1-90-9*)*!\\s+", "", true);
   test("(0|1-90-9*)*!\\s+", "0", true);
   test("(0|1-90-9*)*!\\s+", "0 ", false);
   test("(0|1-90-9*)*!\\s+", "123", true);
   test("(0|1-90-9*)*!\\s+", "1\t2 3", true);
   test("(0|1-90-9*)*!\\s+", "012", false);
-  test("(0|1-90-9*)*!\\s+", "0 1\n2", true);
+  test("(0|1-90-9*)*!\\s+", "0\r 1\n2", true);
   test(":a", "", true);
   test(":a", "a", false);
   test(":a", "ab", false);
@@ -401,23 +426,23 @@ int main(void) {
   test("0?:{3}", "20000", false);
   test("0?:{3}", "000000", false);
   test("0?:{3}", "001000", false);
-  test("(a-z*0-9*):?", "", false);
-  test("(a-z*0-9*):?", "b", true);
-  test("(a-z*0-9*):?", "2", true);
-  test("(a-z*0-9*):?", "c3", true);
-  test("(a-z*0-9*):?", "4d", false);
-  test("(a-z*0-9*):?", "ee56", true);
-  test("(a-z*0-9*):?", "f6g", false);
-  test("(%\\W%|\\d%)?:*!\\.", "", false);
-  test("(%\\W%|\\d%)?:*!\\.", "a", false);
-  test("(%\\W%|\\d%)?:*!\\.", "a2", false);
-  test("(%\\W%|\\d%)?:*!\\.", "2a", true);
-  test("(%\\W%|\\d%)?:*!\\.", "2", true);
-  test("(%\\W%|\\d%)?:*!\\.", "a.b", false);
-  test("(%\\W%|\\d%)?:*!\\.", "a.b.", true);
-  test("(%\\W%|\\d%)?:*!\\.", "a..b", true);
-  test("(%\\W%|\\d%)?:*!\\.", "a0b.c1.d", false);
-  test("(%\\W%|\\d%)?:*!\\.", "a0c.d1.2", true);
+  test("(\\l*\\d*):?", "", false);
+  test("(\\l*\\d*):?", "b", true);
+  test("(\\l*\\d*):?", "2", true);
+  test("(\\l*\\d*):?", "c3", true);
+  test("(\\l*\\d*):?", "4d", false);
+  test("(\\l*\\d*):?", "ee56", true);
+  test("(\\l*\\d*):?", "f6g", false);
+  test("(%\\M%|\\d%)?:*!\\.", "", false);
+  test("(%\\M%|\\d%)?:*!\\.", "a", false);
+  test("(%\\M%|\\d%)?:*!\\.", "a2", false);
+  test("(%\\M%|\\d%)?:*!\\.", "2a", true);
+  test("(%\\M%|\\d%)?:*!\\.", "2", true);
+  test("(%\\M%|\\d%)?:*!\\.", "a.b", false);
+  test("(%\\M%|\\d%)?:*!\\.", "a.b.", true);
+  test("(%\\M%|\\d%)?:*!\\.", "a..b", true);
+  test("(%\\M%|\\d%)?:*!\\.", "a0b.c1.d", false);
+  test("(%\\M%|\\d%)?:*!\\.", "a0c.d1.2", true);
   test("b(!a*)", "", false);
   test("b(!a*)", "b", false);
   test("b(!a*)", "ba", false);
@@ -434,6 +459,22 @@ int main(void) {
   test("(!)?", "", true);
   test("(!)?", "a", true);
   test("(!)?", "ab", true);
+  test("a**", "a", true);
+  test("a*+", "a", true);
+  test("a*?", "a", true);
+  test("a+*", "a", true);
+  test("a++", "a", true);
+  test("a+?", "a", true);
+  test("a?*", "a", true);
+  test("a?+", "a", true);
+  test("a??", "a", true);
+  test("a*{}", "a", false);
+  test("a+{}", "a", false);
+  test("a?{}", "a", false);
+  test("a{}*", "a", false);
+  test("a{}+", "a", false);
+  test("a{}?", "a", false);
+  test("a{}{}", "a", false);
   test("abc>", .errors = true);
   test("<abc", .errors = true);
   test("[a?b]", .errors = true);
@@ -441,16 +482,12 @@ int main(void) {
   test("[--]", .errors = true);
   test("[-]", .errors = true);
   test("-", .errors = true);
+  test("--", .errors = true);
+  test("---", .errors = true);
   test("a-", .errors = true);
   test(".-a", .errors = true);
   test("a-.", .errors = true);
-  test("a*{}", .errors = true);
-  test("a+{}", .errors = true);
-  test("a?{}", .errors = true);
-  test("a{}*", .errors = true);
-  test("a{}+", .errors = true);
-  test("a{}?", .errors = true);
-  test("a{}{}", .errors = true);
+  test("a-\\", .errors = true);
   test("a{2,1}", .errors = true);
   test("a{1 2}", .errors = true);
   test("a{1, 2}", .errors = true);
@@ -459,7 +496,7 @@ int main(void) {
   test("a!!b", .errors = true);
 
   // realistic regexes
-#define HEX_RGB "#[0-9a-fA-F]{3}{1,2}"
+#define HEX_RGB "#\\h{3}{1,2}"
   test(HEX_RGB, "000", false);
   test(HEX_RGB, "#0aA", true);
   test(HEX_RGB, "#00ff", false);
@@ -485,11 +522,11 @@ int main(void) {
   // see also gcc-14/gcc/c-family/c-format.cc:713 'print_char_table'
   // and gcc-14/gcc/c-family/c-format.h:25 'enum format_lengths'
 #define FIELD_WIDTH "(\\*|1-90-9*)?"
-#define PRECISION "(\\." FIELD_WIDTH ")?"
-#define DI "[\\-\\+ 0]*" FIELD_WIDTH PRECISION "(hh|ll|[hljzt])?[di]"
+#define PRECISION "(\\.(\\*|1-90-9*)?)?"
+#define DI "[\\-\\+\\ 0]*" FIELD_WIDTH PRECISION "(hh|ll|[hljzt])?[di]"
 #define U "[\\-0]*" FIELD_WIDTH PRECISION "(hh|ll|[hljzt])?u"
 #define OX "[\\-#0]*" FIELD_WIDTH PRECISION "(hh|ll|[hljzt])?[oxX]"
-#define FEGA "[\\-\\+ #0]*" FIELD_WIDTH PRECISION "[lL]?[fFeEgGaA]"
+#define FEGA "[\\-\\+\\ #0]*" FIELD_WIDTH PRECISION "[lL]?[fFeEgGaA]"
 #define C "\\-*" FIELD_WIDTH "l?c"
 #define S "\\-*" FIELD_WIDTH PRECISION "l?s"
 #define P "\\-*" FIELD_WIDTH "p"
@@ -547,8 +584,7 @@ int main(void) {
   "float|for|goto|if|inline|int|long|register|restrict|return|short|signed|"   \
   "sizeof|static|struct|switch|typedef|union|unsigned|void|volatile|while|"    \
   "_Bool|_Complex|_Imaginary)"
-#define IDENTIFIER                                                             \
-  "(_|\\w|\\\\u[0-9a-fA-F]{4}|\\\\U[0-9a-fA-F]{8})+&!\\d%&!" KEYWORD
+#define IDENTIFIER "(_|\\m|\\\\u\\h{4}|\\\\U\\h{8})+&!\\d%&!" KEYWORD
   test(IDENTIFIER, "", false);
   test(IDENTIFIER, "_", true);
   test(IDENTIFIER, "_foo", true);
@@ -573,8 +609,7 @@ int main(void) {
   // and so really accepts a superset of UTF-8-encoded JSON strings. also, the
   // RFC points out that the grammar would allow string values that are invalid
   // Unicode, but doesn't elaborate, so I guess we can let those through too?
-#define JSON_STR                                                               \
-  "\"(~[\\x00-\\x1f\"\\\\]|\\\\[\"\\\\/bfnrt]|\\\\u[0-9a-fA-F]{4})*\""
+#define JSON_STR "\"(~[\\x00-\\x1f\"\\\\]|\\\\[\"\\\\/bfnrt]|\\\\u\\h{4})*\""
   test(JSON_STR, "foo", false);
   test(JSON_STR, "\"foo", false);
   test(JSON_STR, "foo \"bar\"", false);
@@ -598,7 +633,7 @@ int main(void) {
   test(JSON_STR, "\"\x80\"", true);
   test(JSON_STR, "\"\x88x/\"", true);
   // RFC 8259, $6 'Numbers'
-#define JSON_NUM "\\-?(0|1-90-9*)(\\.0-9+)?([eE][\\+\\-]?0-9+)?"
+#define JSON_NUM "\\-?(0|1-90-9*)(\\.\\d+)?([eE][\\+\\-]?\\d+)?"
   test(JSON_NUM, "e", false);
   test(JSON_NUM, "1", true);
   test(JSON_NUM, "10", true);
@@ -642,7 +677,7 @@ int main(void) {
 #define JSON_STRUC(JSON_VAL) JSON_ARR(JSON_VAL) "|" JSON_OBJ(JSON_VAL)
 #define JSON_VAL(JSON_VAL) "(" JSON_PRIM "|" JSON_STRUC(JSON_VAL) ")"
 #define JSON_TEXT WS(JSON_VAL(JSON_VAL("(" JSON_PRIM ")")))
-#define WS(FACTOR) "[ \\t\\n\\r]*{2}!" FACTOR
+#define WS(FACTOR) "[\\ \\t\\n\\r]*{2}!" FACTOR
   // test cases taken from JSONW's readme
   test(JSON_TEXT, "null", true);
   test(JSON_TEXT, " 123\t", true);
@@ -664,15 +699,13 @@ int main(void) {
   test(JSON_TEXT, "[\"foo\", \"bar\"]", true);
   test(JSON_TEXT, "{ \"name\": \"John\", \"birth\": 1978 }", true);
   test(JSON_TEXT, "{ \"birth\": 2010 }", true);
-  test(JSON_TEXT, "false", true);
-  test(JSON_TEXT, "[]", true);
   test(JSON_TEXT, "{ \"name\": \"too long!\" }", true);
   test(JSON_TEXT, "{ \"birth\": 1.2 }", true);
-  test(JSON_TEXT, "42", true);
+  test(JSON_TEXT, "{ \"age\": 5 }", true);
   // RFC 3629, $3 'UTF-8 definition'. derived from the plain English definition
 #define TAIL "\\x80-\\xbf"
 #define BYTE_PAT                                                               \
-  "(\\x00-\\x7f|\\xc0-\\xdf" TAIL "|\\xe0-\\xef" TAIL TAIL                     \
+  "(\\z|\\xc0-\\xdf" TAIL "|\\xe0-\\xef" TAIL TAIL                             \
   "|\\xf0-\\xf7" TAIL TAIL TAIL ")"
 #define OVERLONG "(\\xc0-\\xc1.|\\xe0\\x80-\\x9f.|\\xf0\\x80-\\x8f..)"
 #define SURROGATE "\\xed\\xa0-\\xbf."
@@ -680,7 +713,7 @@ int main(void) {
 #define UTF8_CHAR_1 "(" BYTE_PAT "&!" OVERLONG "&!" SURROGATE "&!" TOO_BIG ")"
   // RFC 3629, $4 'Syntax of UTF-8 Byte Sequences'. direct transcription of ABNF
 #define TAIL "\\x80-\\xbf"
-#define UTF8_1 "\\x00-\\x7f"
+#define UTF8_1 "\\z"
 #define UTF8_2 "\\xc2-\\xdf" TAIL
 #define UTF8_3                                                                 \
   "\\xe0\\xa0-\\xbf" TAIL "|\\xe1-\\xec" TAIL TAIL "|\\xed\\x80-\\x9f" TAIL    \
@@ -689,11 +722,10 @@ int main(void) {
   "\\xf0\\x90-\\xbf" TAIL TAIL "|\\xf1-\\xf3" TAIL TAIL TAIL                   \
   "|\\xf4\\x80-\\x8f" TAIL TAIL
 #define UTF8_CHAR_2 "(" UTF8_1 "|" UTF8_2 "|" UTF8_3 "|" UTF8_4 ")"
-  // generated by `ltre_decompile`, with alternations reordered manually
+  // generated by `ltre_decompile`, with manual adjustments
 #define UTF8_CHAR_3                                                            \
-  "(\\x00-\\x7f|(\\xc2-\\xdf|\\xe0\\xa0-\\xbf|\\xed\\x80-\\x9f|"               \
-  "([\\xe1-\\xec\\xee\\xef]|\\xf0\\x90-\\xbf|\\xf4\\x80-\\x8f|"                \
-  "\\xf1-\\xf3\\x80-\\xbf)\\x80-\\xbf)\\x80-\\xbf)"
+  "(\\z|(\\xc2-\\xdf|\\xe0\\xa0-\\xbf|\\xed\\x80-\\x9f|(<\\xe1-\\xef~\\xed>|"  \
+  "\\xf0\\x90-\\xbf|\\xf4\\x80-\\x8f|\\xf1-\\xf3" TAIL ")" TAIL ")" TAIL ")"
   // all three regular expressions above should accept the same language
 #define UTF8_CHAR_ALL UTF8_CHAR_1 "&" UTF8_CHAR_2 "&" UTF8_CHAR_3
 #define UTF8_CHARS_ALL UTF8_CHAR_1 "*&" UTF8_CHAR_2 "*&" UTF8_CHAR_3 "*"
@@ -771,8 +803,8 @@ int main(void) {
   // constructed by state removal on the minimal 3-state DFA over the alphabet
   // '0-9'. test cases are random numbers 1..1e12, logarithmically distributed
 #define DIV_BY_3                                                               \
-  "([0369]|[147][0369]*[258]|(([258]|[147][0369]*[147])"                       \
-  "([0369]|[258][0369]*[147])*([147]|[258][0369]*[258])))*"
+  "([0369]|[147][0369]*[258]|([258]|[147][0369]*[147])"                        \
+  "([0369]|[258][0369]*[147])*([147]|[258][0369]*[258]))*"
   test(DIV_BY_3, "", true);
   test(DIV_BY_3, "3", true);
   test(DIV_BY_3, "4818", true);

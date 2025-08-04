@@ -5,9 +5,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define METACHARS "\\-.~[]<>%{}*+?:|&=!()"
-#define C_ESCAPES "abfnrtv"
-#define C_CODEPTS "\a\b\f\n\r\t\v"
+#define METACHARS "\\-.~[]<>%{}*+?:|&=!() "
+#define SIMPLE_ESCAPES "bfnrtve"
+#define SIMPLE_CODEPTS "\b\f\n\r\t\v\x1b"
 
 // on x86_64, `unsigned` saves us a `cdqe` instruction over `int` in the
 // fragment `id / 8`
@@ -42,9 +42,9 @@ static char *symset_fmt(symset_t symset) {
     char **p = bitset_get(symset, chr) ? &bufp : &nbufp;
     bool is_metachar = chr && strchr(METACHARS, chr);
 
-    char *codept, *codepts = C_CODEPTS;
+    char *codept, *codepts = SIMPLE_CODEPTS;
     if (chr && (codept = strchr(codepts, chr)))
-      *(*p)++ = '\\', *(*p)++ = C_ESCAPES[codept - codepts];
+      *(*p)++ = '\\', *(*p)++ = SIMPLE_ESCAPES[codept - codepts];
     else if (!isprint(chr) && !is_metachar)
       *p += sprintf(*p, "\\x%02hhx", chr);
     else {
@@ -89,7 +89,7 @@ static char *symset_fmt(symset_t symset) {
 // regular expressions returned from functions are owned. to lend a regular
 // expression `r` to some function `f`, just call `f(regex_incref(r))`
 struct regex {
-  // compile with `-fsmall-enums` or equivalent for optimal packing
+  // compile with `-fshort-enums` or equivalent for optimal packing
   enum regex_type {
     TYPE_ALT,    // r|s
     TYPE_COMPL,  // !r
@@ -806,6 +806,12 @@ void dfa_dump(struct dstate *dfa) {
 // - the returned regular expression should be `NULL`
 // - the caller is responsible for backtracking
 
+static int parse_ws(char **pattern) {
+  while (**pattern && isspace(**pattern))
+    ++*pattern;
+  return 1; // for use within &&
+}
+
 static unsigned parse_natural(char **pattern, char **error) {
   if (!isdigit(**pattern)) {
     *error = "expected natural number";
@@ -841,12 +847,12 @@ static uint8_t parse_hexbyte(char **pattern, char **error) {
 }
 
 static uint8_t parse_escape(char **pattern, char **error) {
-  if (strchr(METACHARS, **pattern))
+  if (**pattern && strchr(METACHARS, **pattern))
     return *(*pattern)++;
 
-  char *escape, *escapes = C_ESCAPES;
+  char *escape, *escapes = SIMPLE_ESCAPES;
   if (**pattern && (escape = strchr(escapes, **pattern)) && ++*pattern)
-    return C_CODEPTS[escape - escapes];
+    return SIMPLE_CODEPTS[escape - escapes];
 
   if (**pattern == 'x' && ++*pattern) {
     uint8_t chr = parse_hexbyte(pattern, error);
@@ -889,32 +895,41 @@ static uint8_t parse_symbol(char **pattern, char **error) {
 static void parse_shorthand(symset_t *symset, char **pattern, char **error) {
   memset(symset, 0x00, sizeof(*symset));
 
-#define RETURN_SYMSET(COND)                                                    \
+#define RETURN_SYMSET(PRED)                                                    \
   for (int chr = 0; chr < 256; chr++)                                          \
-    if (COND)                                                                  \
+    if (PRED(chr))                                                             \
       bitset_set(*symset, chr);                                                \
-  return;
+  return
+
+#define CASE_PAIR(CHR, PRED)                                                   \
+  case CHR:                                                                    \
+    RETURN_SYMSET(PRED);                                                       \
+  case CHR ^ ' ':                                                              \
+    RETURN_SYMSET(!PRED)
 
   switch (*(*pattern)++) {
-  case 'd':
-    RETURN_SYMSET(isdigit(chr));
-  case 'D':
-    RETURN_SYMSET(!isdigit(chr));
-  case 's':
-    RETURN_SYMSET(isspace(chr));
-  case 'S':
-    RETURN_SYMSET(!isspace(chr));
-  case 'w':
-    RETURN_SYMSET(isalnum(chr));
-  case 'W':
-    RETURN_SYMSET(!isalnum(chr));
+    CASE_PAIR('m', isalnum);
+    CASE_PAIR('a', isalpha);
+    CASE_PAIR('k', isblank);
+    CASE_PAIR('c', iscntrl);
+    CASE_PAIR('d', isdigit);
+    CASE_PAIR('g', isgraph);
+    CASE_PAIR('l', islower);
+    CASE_PAIR('p', isprint);
+    CASE_PAIR('q', ispunct);
+    CASE_PAIR('s', isspace);
+    CASE_PAIR('u', isupper);
+    CASE_PAIR('h', isxdigit);
+#define ISASCII(CHR) !(CHR & ~0x7F)
+    CASE_PAIR('z', ISASCII);
   }
 
-  --*pattern;
-  *error = "expected shorthand class";
-  return;
+#undef RETURN_SYMSET
+#undef CASE_PAIR
 
-#undef WRITE_SYMSET
+  --*pattern;
+  *error = "expected shorthand";
+  return;
 }
 
 static void parse_symset(symset_t *symset, char **pattern, char **error) {
@@ -925,7 +940,7 @@ static void parse_symset(symset_t *symset, char **pattern, char **error) {
     goto process_compl;
   }
 
-  if (**pattern == '[' && ++*pattern) {
+  if (**pattern == '[' && ++*pattern && parse_ws(pattern)) {
     memset(symset, 0x00, sizeof(*symset));
     while (**pattern != ']') {
       symset_t sub;
@@ -937,14 +952,11 @@ static void parse_symset(symset_t *symset, char **pattern, char **error) {
         (*symset)[i] |= sub[i];
     }
 
-    if (**pattern == ']' && ++*pattern)
-      goto process_compl;
-
-    *error = "expected ']'";
-    return;
+    ++*pattern;
+    goto process_compl;
   }
 
-  if (**pattern == '<' && ++*pattern) {
+  if (**pattern == '<' && ++*pattern && parse_ws(pattern)) {
     memset(symset, 0xff, sizeof(*symset));
     while (**pattern != '>') {
       symset_t sub;
@@ -956,11 +968,8 @@ static void parse_symset(symset_t *symset, char **pattern, char **error) {
         (*symset)[i] &= sub[i];
     }
 
-    if (**pattern == '>' && ++*pattern)
-      goto process_compl;
-
-    *error = "expected '>'";
-    return;
+    ++*pattern;
+    goto process_compl;
   }
 
   char *last_pattern = *pattern;
@@ -994,20 +1003,21 @@ process_compl:
   if (compl )
     for (int i = 0; i < sizeof(*symset); i++)
       (*symset)[i] = ~(*symset)[i];
+  parse_ws(pattern);
   return;
 }
 
 static struct regex *parse_regex(char **pattern, char **error);
 static struct regex *parse_atom(char **pattern, char **error) {
-  if (**pattern == '%' && ++*pattern)
+  if (**pattern == '%' && ++*pattern && parse_ws(pattern))
     return regex_univ();
 
-  if (**pattern == '(' && ++*pattern) {
+  if (**pattern == '(' && ++*pattern && parse_ws(pattern)) {
     struct regex *sub = parse_regex(pattern, error);
     if (*error)
       return NULL;
 
-    if (**pattern == ')' && ++*pattern)
+    if (**pattern == ')' && ++*pattern && parse_ws(pattern))
       return sub;
 
     *error = "expected ')'";
@@ -1033,7 +1043,8 @@ static struct regex *parse_factor(char **pattern, char **error) {
   unsigned lower = 1, upper = 1;
   bool compl = false;
 
-next_quant:;
+next_quant:
+  parse_ws(pattern);
   bool dual = **pattern == ':' && ++*pattern;
 
   char *quants = "*+?", *quant = strchr(quants, **pattern);
@@ -1089,7 +1100,7 @@ next_quant:;
 
   *pattern -= dual, dual = false; // do not consume ':'
 
-  if (**pattern == '!' && ++*pattern) {
+  if (**pattern == '!' && ++*pattern && parse_ws(pattern)) {
     // we want say r:+!s to mean r|r:(!s):r|r:(!s):r:(!s):r|... because that
     // seems most useful, so when the quantifier is a dual quantifier we don't
     // complement the separator
@@ -1104,6 +1115,7 @@ next_quant:;
     lower = lower != 0, upper = upper != 0;
   }
 
+  parse_ws(pattern);
   return dual ^ compl ? regex_compl(regex_repeat(atom, lower, upper))
                       : regex_repeat(atom, lower, upper);
 }
@@ -1112,7 +1124,7 @@ static struct regex *parse_term(char **pattern, char **error) {
   struct regex *factors = regex_eps();
 
   // hacky lookahead for better diagnostics
-  while (!strchr(":|&=)", **pattern)) {
+  while (parse_ws(pattern), !strchr(":|&=)", **pattern)) {
     struct regex *cat = parse_factor(pattern, error);
     if (*error)
       return regex_decref(factors), NULL;
@@ -1120,7 +1132,7 @@ static struct regex *parse_term(char **pattern, char **error) {
     factors = regex_concat(REGEXES(factors, cat));
   }
 
-  if (**pattern == ':' && ++*pattern) {
+  if (**pattern == ':' && ++*pattern && parse_ws(pattern)) {
     struct regex *dcat = parse_term(pattern, error);
     if (*error)
       return regex_decref(factors), NULL;
@@ -1133,13 +1145,13 @@ static struct regex *parse_term(char **pattern, char **error) {
 }
 
 static struct regex *parse_regex(char **pattern, char **error) {
-  bool compl = **pattern == '!' && ++*pattern;
+  bool compl = **pattern == '!' && ++*pattern && parse_ws(pattern);
 
   struct regex *term = parse_term(pattern, error);
   if (*error)
     return NULL;
 
-  if (**pattern == '=' && ++*pattern) {
+  if (**pattern == '=' && ++*pattern && parse_ws(pattern)) {
     struct regex *bicond = parse_regex(pattern, error);
     if (*error)
       return regex_decref(term), NULL;
@@ -1152,7 +1164,7 @@ static struct regex *parse_regex(char **pattern, char **error) {
     return regex_alt(REGEXES(neither, both));
   }
 
-  if (**pattern == '|' && ++*pattern) {
+  if (**pattern == '|' && ++*pattern && parse_ws(pattern)) {
     struct regex *alt = parse_regex(pattern, error);
     if (*error)
       return regex_decref(term), NULL;
@@ -1160,7 +1172,7 @@ static struct regex *parse_regex(char **pattern, char **error) {
     return regex_alt(REGEXES(compl ? regex_compl(term) : term, alt));
   }
 
-  if (**pattern == '&' && ++*pattern) {
+  if (**pattern == '&' && ++*pattern && parse_ws(pattern)) {
     struct regex *int_ = parse_regex(pattern, error);
     if (*error)
       return regex_decref(term), NULL;
@@ -1183,6 +1195,7 @@ struct regex *ltre_parse(char **pattern, char **error) {
     error = &e, pattern = &r;
 
   *error = NULL;
+  parse_ws(pattern);
   struct regex *regex = parse_regex(pattern, error);
   if (*error)
     return NULL;

@@ -1,6 +1,4 @@
 CC=gcc
-# XXX
-# CFLAGS=-O0 -Wall -Wextra -Wpedantic -std=c99 -fshort-enums -g -fsanitize=address
 CFLAGS=-O2 -Wall -Wextra -Wpedantic -std=c99 -fshort-enums
 
 all: bin/ltrep bin/compl bin/equiv bin/test
