@@ -104,6 +104,11 @@ struct regex {
   // `struct regex` is a persistent data structure with structural sharing, so
   // we want a reference count
   unsigned refcount;
+  // a measure of the size of the regular expression if structural sharing were
+  // expanded out, defined as `size(regex) = 1 + sum(size(regex->children))`.
+  // this measure is irrelevant the vast majority of the time because structural
+  // sharing is only ever expanded out when regular expressions are stringified
+  unsigned size;
   // repetition bounds for `TYPE_REPEAT`, both inclusive. `upper == UINT_MAX`
   // means there is no upper bound. for `TYPE_SYMSET`, if `upper == 1` then the
   // symset is the universal symset
@@ -176,6 +181,12 @@ static int regexes_cmp(struct regex *regexes1[], struct regex *regexes2[]) {
   return !!*regex1 - !!*regex2;
 }
 
+unsigned regex_size(struct regex *regex) {
+  // see `struct regex` for caveats. this measure is irrelevant the vast
+  // majority of the time because structural sharing is rarely ever expanded out
+  return regex->size;
+}
+
 int regex_cmp(struct regex *regex1, struct regex *regex2) {
   // return an integer less than, equal to, or greater than zero if
   // `regex1` is, respectively, structurally less than, structurally equal
@@ -185,6 +196,9 @@ int regex_cmp(struct regex *regex1, struct regex *regex2) {
     return 0;
 
   int cmp;
+  if (cmp = -regex1->size - -regex2->size)
+    return cmp;
+
   if (cmp = regex1->type - regex2->type)
     return cmp;
 
@@ -234,17 +248,6 @@ static struct regex **regexes_insert(struct regex *regexes[],
   return regexes;
 }
 
-static struct regex **regexes_extend(struct regex *regexes[],
-                                     struct regex *elems[]) {
-  // insert borrowed elements `elems` into the owned sorted array `regexes` if
-  // they are not already present
-
-  struct regex **regex = regexes;
-  for (struct regex **elem = elems; *elem; elem++)
-    regex = regexes_insert(regex, *elem);
-  return regex;
-}
-
 // smart constructors for `struct regex`. they return regular expressions
 // that are in a quasi-normal form by eliminating neutral elements, collapsing
 // annihilators, sorting the children of commutative operators, and so on. when
@@ -279,6 +282,7 @@ struct regex *regex_alt(struct regex *children[]) {
   if (negeps_child && !(nullable || eps_child))
     return regexes_decref(children), regex_negeps();
 
+  unsigned size = 1;
   struct regex *flat_children[flat_len + 1];
   *flat_children = NULL;
   for (struct regex **child = children; *child; child++) {
@@ -292,10 +296,12 @@ struct regex *regex_alt(struct regex *children[]) {
     // r|(s|t) |- r|s|t
     // (r|s)|t |- r|s|t
     // r|s |- s|r, if cmp(r, s) < 0
-    else if ((*child)->type == TYPE_ALT)
-      regexes_extend(flat_children, (*child)->children);
-    else
-      regexes_insert(flat_children, *child);
+    else if ((*child)->type == TYPE_ALT) {
+      struct regex **regex = flat_children;
+      for (struct regex **subchild = (*child)->children; *subchild; subchild++)
+        regex = regexes_insert(regex, *subchild), size += (*subchild)->size;
+    } else
+      regexes_insert(flat_children, *child), size += (*child)->size;
     regex_decref(*child);
   }
 
@@ -309,8 +315,9 @@ struct regex *regex_alt(struct regex *children[]) {
   if (!flat_children[1])
     return *flat_children;
 
-  struct regex *regex = regex_alloc(flat_children, TYPE_ALT);
-  return regex->nullable = nullable, regex;
+  struct regex *regex =
+      regex_alloc(flat_children, TYPE_ALT, .nullable = nullable);
+  return regex->size = size, regex;
 }
 
 struct regex *regex_compl(struct regex *child) {
@@ -327,10 +334,12 @@ struct regex *regex_compl(struct regex *child) {
     return regex_decref(child), subchild; // !!r |- r
   }
 
+  unsigned size = 1 + child->size;
   bool nullable = !child->nullable;
 
-  struct regex *regex = regex_alloc(REGEXES(child), TYPE_COMPL);
-  return regex->nullable = nullable, regex;
+  struct regex *regex =
+      regex_alloc(REGEXES(child), TYPE_COMPL, .nullable = nullable);
+  return regex->size = size, regex->nullable = nullable, regex;
 }
 
 struct regex *regex_concat(struct regex *children[]) {
@@ -360,6 +369,7 @@ struct regex *regex_concat(struct regex *children[]) {
   if (negeps_child && (nullable && !negeps_child))
     return regexes_decref(children), regex_negeps();
 
+  unsigned size = 1;
   struct regex *flat_children[flat_len + 1], **flat_child = flat_children;
   for (struct regex **child = children; *child; child++) {
     // r() |- r
@@ -368,9 +378,9 @@ struct regex *regex_concat(struct regex *children[]) {
     // (rs)t |- rst
     if ((*child)->type == TYPE_CONCAT)
       for (struct regex **subchild = (*child)->children; *subchild; subchild++)
-        *flat_child++ = regex_incref(*subchild);
+        *flat_child++ = regex_incref(*subchild), size += (*subchild)->size;
     else
-      *flat_child++ = regex_incref(*child);
+      *flat_child++ = regex_incref(*child), size += (*child)->size;
     regex_decref(*child);
   }
   *flat_child = NULL;
@@ -385,10 +395,13 @@ struct regex *regex_concat(struct regex *children[]) {
   if (!flat_children[1])
     return *flat_children;
 
-  struct regex *regex = regex_alloc(flat_children, TYPE_CONCAT);
-  return regex->nullable = nullable, regex;
+  struct regex *regex =
+      regex_alloc(flat_children, TYPE_CONCAT, .nullable = nullable);
+  return regex->size = size, regex;
 }
 
+static struct regex *regex_repeat_prev(struct regex *prev, struct regex *child,
+                                       unsigned lower, unsigned upper);
 struct regex *regex_repeat(struct regex *child, unsigned lower,
                            unsigned upper) {
   if (upper == 0)
@@ -439,11 +452,12 @@ struct regex *regex_repeat(struct regex *child, unsigned lower,
     }
   }
 
+  unsigned size = 1 + child->size;
   bool nullable = lower == 0 || child->nullable;
 
-  struct regex *regex =
-      regex_alloc(REGEXES(child), TYPE_REPEAT, .lower = lower, .upper = upper);
-  return regex->nullable = nullable, regex;
+  struct regex *regex = regex_alloc(REGEXES(child), TYPE_REPEAT, .lower = lower,
+                                    .upper = upper, .nullable = nullable);
+  return regex->size = size, regex;
 }
 
 struct regex *regex_symset(symset_t *symset) {
@@ -453,11 +467,13 @@ struct regex *regex_symset(symset_t *symset) {
   if (empty)
     return regex_empty(); // [] |- []
 
+  unsigned size = 1;
   bool nullable = false;
 
-  struct regex *regex = regex_alloc(REGEXES(NULL), TYPE_SYMSET, .upper = upper);
+  struct regex *regex = regex_alloc(REGEXES(NULL), TYPE_SYMSET, .upper = upper,
+                                    .nullable = nullable);
   memcpy(regex->symset, *symset, sizeof(*symset));
-  return regex->nullable = nullable, regex;
+  return regex->size = size, regex;
 }
 
 // wrappers around the smart constructors, for structural recursion. when
@@ -616,7 +632,11 @@ static char *regex_fmt(struct regex *regex, char *buf, enum regex_type prec) {
   // `ltre_parse` and `regex_fmt` shall be the inverse of `ltre_parse` up to
   // accepted language. call `regex_fmt_len` to know how much memory to allocate
   // for `buf`. `prec` is a lower bound on the precedence of the pattern string
-  // to be produced; call initially with `prec = 0`. borrows its argument
+  // to be produced; call initially with `prec = 0`. since `struct regex` has
+  // structural sharing, the time complexity of `regex_fmt` and `regex_fmt_len`
+  // and the length of the pattern string returned are exponential in the amount
+  // of memory used by a `struct regex`. to avoid catastrophic resource usage,
+  // inspect `regex->size` before calling either function. borrows its argument
 
   if (regex == regex_empty())
     return strcpy(buf, "[]"), buf += 2;
@@ -1243,6 +1263,10 @@ struct regex *ltre_fixed_string(char *string) {
 }
 
 char *ltre_stringify(struct regex *regex) {
+  // the length of the pattern string returned may be exponential in the amount
+  // of memory used by a `struct regex`. to avoid catastrophic resource usage,
+  // check `regex_size(regex)` before calling this function
+
   char *pattern = malloc(regex_fmt_len(regex, 0) + 1);
   (void)regex_fmt(regex, pattern, 0);
   return regex_decref(regex), pattern;
@@ -1665,24 +1689,30 @@ struct regex *ltre_decompile(struct dstate *dfa) {
   // its inbound and outbound transitions so as to bypass that state, while also
   // taking care of self-loops. don't ever select the auxiliary state, so that
   // when we're done the final regular expression ends up as a self-loop on the
-  // auxiliary state. choosing the state that minimizes 'in-degree * out-degree'
-  // seems to work okay, sa that's the heuristic we're using
+  // auxiliary state. greedily choosing the state that minimizes the cumulative
+  // `regex->size` of re-routed arrows seems to work okay, sa that's the
+  // heuristic we're using
   while (1) {
-    int best_fit, min_cost = INT_MAX;
+    int best_fit;
+    unsigned min_cost = UINT_MAX;
     for (int id1 = 0; id1 < dfa_size; id1++) {
-      int in_degree = 0, out_degree = 0;
-      for (int id2 = 0; id2 < dfa_size; id2++)
-        in_degree += !!arrows[id2][id1], out_degree += !!arrows[id1][id2];
+      unsigned in_degree = 0, in_sizes = 0, out_degree = 0, out_sizes = 0;
+      for (int id2 = 0; id2 <= dfa_size; id2++) {
+        if (arrows[id2][id1])
+          in_degree++, in_sizes += arrows[id2][id1]->size;
+        if (arrows[id1][id2])
+          out_degree++, out_sizes += arrows[id1][id2]->size;
+      }
 
       if (in_degree + out_degree == 0)
         continue; // state has already been processed
 
-      int cost = in_degree * out_degree;
+      unsigned cost = in_sizes * out_degree + out_sizes * in_degree;
       if (cost <= min_cost)
         min_cost = cost, best_fit = id1;
     }
 
-    if (min_cost == INT_MAX)
+    if (min_cost == UINT_MAX)
       break; // all states have been processed
 
     // iterate through all pairs of inbound and outbound transitions, including

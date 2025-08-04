@@ -27,6 +27,7 @@ bool dfa_equivalent(struct dstate *dfa1, struct dstate *dfa2);
 
 struct regex *regex_incref(struct regex *regex);
 struct regex *regex_decref(struct regex *regex);
+unsigned regex_size(struct regex *regex);
 int regex_cmp(struct regex *regex1, struct regex *regex2);
 
 struct regex *regex_alt(struct regex *children[]);

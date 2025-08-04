@@ -760,8 +760,23 @@ int main(void) {
   test(UTF8_CHARS_SOME, "\xc2\x7f", false);     // bad tail
   test(UTF8_CHARS_SOME, "\xe2\x28\xa1", false); // bad tail
   test(UTF8_CHARS_SOME, "\x80x/", false);
-  // minimal DFA over the alphabet '0-1' for the regular expression /1[10]*0/
-#define FA_PATH(TRANS) "A-Z+!0-1&[]:(!A-Z{2}!0-1|" TRANS "):[]"
+  // IPv4 addresses in dot-decimal notation
+#define IPV4 "(250-5|(20-4|1\\d|1-9?)\\d){4}!\\."
+  test(IPV4, "0.0.0.0", true);
+  test(IPV4, "1.1.1.1", true);
+  test(IPV4, "10.0.0.4", true);
+  test(IPV4, "127.0.0.1", true);
+  test(IPV4, "192.168.0.1", true);
+  test(IPV4, "55.148.8.11", true);
+  test(IPV4, "255.255.255.255", true);
+  test(IPV4, "1..1.1", false);
+  test(IPV4, "0.0.0.0.", false);
+  test(IPV4, ".0.0.0.0", false);
+  test(IPV4, "1.1.01.1", false);
+  test(IPV4, "10.0.0.256", false);
+  test(IPV4, "12.224.29.25.149", false);
+// minimal DFA over the alphabet '0-1' for the regular expression /1[10]*0/
+#define FA_PATH(TRANS) "\\u+!0-1&[]:(!\\u0-1\\u|" TRANS "):[]"
 #define ACCEPT FA_PATH("A1B|A0D|D[01]D|[BC]1B|[BC]0C") "&A%%[C]"
 #define REJECT FA_PATH("A1B|A0D|D[01]D|[BC]1B|[BC]0C") "&A%~[C]"
   test(ACCEPT, "A0D", false);
