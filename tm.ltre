@@ -1,0 +1,16 @@
+( this works because Turing machines with fixed-length tapes have the same
+| expressive power as finite automata ){}
+
+\n+!(0-1*\a0-1*&.{9})&
+[]:(!\A0-1\A.{9}| .0.{9}0|.1.{9}1):[]&
+[]:(!\A\a\A.{10}|
+  ( rules for BB-3. current cell is the one right of the state letter ){}
+  0a0.{7}01b| 1a0.{7}11b| ( a,0: 1,R,b ){}
+  0a1.{7}c01| 1a1.{7}c11| ( a,1: 1,L,c ){}
+  0b0.{7}a01| 1b0.{7}a11| ( b,0: 1,L,a ){}
+  0b1.{7}01b| 1b1.{7}11b| ( b,1: 1,R,b ){}
+  0c0.{7}b01| 1c0.{7}b11| ( c,0: 1,L,b ){}
+  0c1.{7}0h1| 1c1.{7}1h1| ( c,1: 1,N,h ){}
+):[]
+
+( vim:se ft=ltre: ){}

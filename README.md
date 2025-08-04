@@ -59,6 +59,7 @@ make bin/synth
 echo '0' | bin/synth '0|1+' # 0
 echo '1' | bin/synth '0|1+' | head -c 256 # 111...
 bin/synth '((0{2}!1){2}!2){2}!3' # 010201030102010
+echo '0000a0000' | bin/synth "$(cat tm.ltre)"
 # use `stty -icanon -echo -nl` for interactive use
 ```
 

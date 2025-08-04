@@ -8,6 +8,37 @@ struct dstate {
   bool accepting, terminating;
 };
 
+bool run(struct dstate *dfa) {
+  // if all outbound transitions are terminating, return. otherwise, if exactly
+  // one outbound transition is non-terminating, follow it. otherwise, more than
+  // one outbound transition is non-terminating, so let the user disambiguate.
+  // interactive use works best with `stty -icanon -echo -nl`
+  for (int chr = 0;; dfa = dfa->transitions[chr]) {
+    if (putchar(chr) == EOF)
+      goto done;
+
+    for (chr = 0; chr < 256; chr++)
+      if (!dfa->transitions[chr]->terminating)
+        break;
+    if (chr == 256)
+      goto done;
+
+    for (int split = chr + 1; split < 256; split++)
+      if (!dfa->transitions[split]->terminating)
+        goto disambiguate;
+    continue;
+
+  disambiguate:
+    // do
+    if ((chr = getchar()) == EOF)
+      goto done;
+    // while (dfa->transitions[chr]->terminating);
+  }
+
+done:
+  return dfa->accepting;
+}
+
 int main(int argc, char **argv) {
   if (argc != 2)
     fprintf(stderr, "Usage: synth <pattern>\n"), exit(EXIT_FAILURE);
@@ -21,32 +52,10 @@ int main(int argc, char **argv) {
   struct dstate *dfa = ltre_determinize(regex);
   dfa_optimize(dfa); // mark terminating states. faster than `dfa_minimize`
 
-  // if all outbound transitions are terminating, exit. otherwise, if exactly
-  // one outbound transition is non-terminating, follow it. otherwise, more than
-  // one outbound transition is non-terminating, so let the user disambiguate.
-  // interactive use works best with `stty -icanon -echo -nl`
-  for (int chr = 0;; dfa = dfa->transitions[chr]) {
-    if (putchar(chr) == EOF)
-      goto exit;
+  // while (1)
+  //   puts(run(dfa) ? "\naccept" : "\nreject");
 
-    for (chr = 0; chr < 256; chr++)
-      if (!dfa->transitions[chr]->terminating)
-        break;
-    if (chr == 256)
-      goto exit;
-
-    for (int split = chr + 1; split < 256; split++)
-      if (!dfa->transitions[split]->terminating)
-        goto disambiguate;
-    continue;
-
-  disambiguate:
-    // do
-    if ((chr = getchar()) == EOF)
-      goto exit;
-    // while (dfa->transitions[chr]->terminating);
-  }
-
-exit:
-  return !dfa->accepting;
+  bool accept = run(dfa);
+  dfa_free(dfa);
+  return !accept;
 }

@@ -24,6 +24,8 @@ void test(struct test args) {
       memcmp(&memo.errors, &args.errors, sizeof(bool[6])) == 0)
     goto check_matches;
 
+  // puts(args.pattern); // to test ltre.vim
+
   char *error = NULL, *loc = args.pattern;
   struct regex *regex = ltre_parse(&loc, &error);
 
