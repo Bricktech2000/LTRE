@@ -14,7 +14,7 @@ struct dstate {
 };
 
 // '-S' is dealt with separately in `parse_args`
-const char *opts = "v xpisF HhnNb o c l ";
+char *opts = "v xpisF HhnNb o c l ";
 struct args {
   struct {
     bool invert;  // -v
@@ -199,11 +199,10 @@ int main(int argc, char **argv) {
     uint8_t *nl, *line = malloc(cap);
     while (fgets((char *)line + len, cap - len, stdin) != NULL) {
       if ((nl = memchr(line + len, '\n', cap - len)) == NULL) {
-        if (!feof(stdin)) {
-          len = cap - 1, line = realloc(line, cap *= 2);
-          continue;
-        }
-        nl = memchr(line + len, '\0', cap - len);
+        if (feof(stdin) ? nl = memchr(line + len, '\0', cap - len) : 0)
+          break;
+        len = cap - 1, line = realloc(line, cap *= 2);
+        continue;
       }
       *nl = '\0', len = 0;
 
