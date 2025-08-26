@@ -7,19 +7,19 @@ bin/ltrep: ltrep.c bin/ltre.o | bin/
 	$(CC) $(CFLAGS) -Wno-parentheses -Wno-unused-parameter $^ -o $@
 
 bin/compl: compl.c bin/ltre.o | bin/
-	$(CC) $(CFLAGS) $^ -o $@
+	$(CC) $(CFLAGS) -Wno-parentheses $^ -o $@
 
 bin/equiv: equiv.c bin/ltre.o | bin/
-	$(CC) $(CFLAGS) $^ -o $@
+	$(CC) $(CFLAGS) -Wno-parentheses $^ -o $@
 
 bin/synth: synth.c bin/ltre.o | bin/
-	$(CC) $(CFLAGS) $^ -o $@
+	$(CC) $(CFLAGS) -Wno-parentheses $^ -o $@
 
 bin/test: test.c bin/ltre.o | bin/
-	$(CC) $(CFLAGS) -Wno-missing-field-initializers $^ -o $@
+	$(CC) $(CFLAGS) -Wno-parentheses -Wno-missing-field-initializers $^ -o $@
 
 bin/ltre.o: ltre.c ltre.h | bin/
-	$(CC) $(CFLAGS) -Wno-sign-compare -Wno-parentheses -Wno-missing-field-initializers -Wno-implicit-fallthrough -c $< -o $@
+	$(CC) $(CFLAGS) -Wno-parentheses -Wno-sign-compare -Wno-missing-field-initializers -Wno-implicit-fallthrough -c $< -o $@
 
 bin/:
 	mkdir bin/

@@ -9,21 +9,10 @@
 #define SIMPLE_ESCAPES "bfnrtve"
 #define SIMPLE_CODEPTS "\b\f\n\r\t\v\x1b"
 
-// on x86_64, `unsigned` saves us a `cdqe` instruction over `int` in the
-// fragment `id / 8`
-static bool bitset_get(uint8_t bitset[], unsigned idx) {
-  return bitset[idx / 8] & 1 << idx % 8;
-}
+bool symset_read(symset_t symset, unsigned chr);
+void symset_write(symset_t symset, unsigned chr, bool val);
 
-static void bitset_set(uint8_t bitset[], unsigned idx) {
-  bitset[idx / 8] |= 1 << idx % 8;
-}
-
-static void bitset_clr(uint8_t bitset[], unsigned idx) {
-  bitset[idx / 8] &= ~(1 << idx % 8);
-}
-
-static char *symset_fmt(symset_t symset) {
+char *symset_fmt(symset_t symset) {
   // returns a static buffer. output shall be parsable by `parse_symset` and
   // satisfy the invariant `parse_symset . symset_fmt == id`. in the general
   // case, will not satisfy `symset_fmt . parse_symset == id`
@@ -38,8 +27,8 @@ static char *symset_fmt(symset_t symset) {
 
   for (int chr = 0; chr < 256; chr++) {
   append_chr:
-    bitset_get(symset, chr) ? nsym++ : nnsym++;
-    char **p = bitset_get(symset, chr) ? &bufp : &nbufp;
+    symset_read(symset, chr) ? nsym++ : nnsym++;
+    char **p = symset_read(symset, chr) ? &bufp : &nbufp;
     bool is_metachar = chr && strchr(METACHARS, chr);
 
     char *codept, *codepts = SIMPLE_CODEPTS;
@@ -55,10 +44,11 @@ static char *symset_fmt(symset_t symset) {
 
     // make character ranges
     int start = chr;
-    while (chr < 255 && bitset_get(symset, chr) == bitset_get(symset, chr + 1))
+    while (chr < 255 &&
+           symset_read(symset, chr) == symset_read(symset, chr + 1))
       chr++;
     if (chr - start >= 2)
-      *(*p)++ = '-', bitset_get(symset, chr) ? nsym-- : nnsym--;
+      *(*p)++ = '-', symset_read(symset, chr) ? nsym-- : nnsym--;
     if (chr - start >= 1)
       goto append_chr;
   }
@@ -115,12 +105,12 @@ struct regex {
   unsigned lower, upper;
   // set of symbols for `TYPE_SYMSET`. also used for caching the most recent
   // derivative and a conservative set of characters for which it holds: if
-  // `bitset_get(regex->symset, chr) == regex->sym_incl` then `regex->delta` is
-  // the derivative of `regex` with respect to `chr`. if `delta` is `NULL`, no
-  // derivative is cached. we need `sym_incl` because otherwise there'd be no
-  // representation for a `TYPE_SYMSET` with a cached derivative that holds for
-  // all characters not in the symset
-  uint8_t symset[256];
+  // `symset_read(regex->symset, chr) == regex->sym_incl` then `regex->delta`
+  // is the derivative of `regex` with respect to `chr`. if `delta` is `NULL`,
+  // no derivative is cached. we need `sym_incl` because otherwise there'd be
+  // no representation for a `TYPE_SYMSET` with a cached derivative that holds
+  // for all characters not in the symset
+  symset_t symset;
   struct regex *delta;
   // `NULL`-terminated list of children for `TYPE_ALT` and `TYPE_CONCAT` (which
   // we're free to do because alternation and concatenation are associative), or
@@ -132,7 +122,15 @@ struct regex {
   struct regex *children[];
 };
 
-static size_t regexes_len(struct regex *regexes[]);
+static size_t regexes_len(struct regex *regexes[]) {
+  // borrows its argument
+
+  struct regex **regex = regexes;
+  while (*regex)
+    regex++;
+  return regex - regexes;
+}
+
 static struct regex *regex_alloc(struct regex fields,
                                  struct regex *children[]) {
 #define regex_alloc(CHILDREN, ...)                                             \
@@ -169,6 +167,12 @@ struct regex *regex_decref(struct regex *regex) {
   return free(regex), NULL;
 }
 
+unsigned regex_size(struct regex *regex) {
+  // see `struct regex` for caveats. this measure is irrelevant the vast
+  // majority of the time because structural sharing is rarely ever expanded out
+  return regex->size;
+}
+
 static int regexes_cmp(struct regex *regexes1[], struct regex *regexes2[]) {
   // return an integer less than, equal to, or greater than zero if
   // `regexes1` is, respectively, structurally less than, structurally equal
@@ -179,12 +183,6 @@ static int regexes_cmp(struct regex *regexes1[], struct regex *regexes2[]) {
     if (cmp = regex_cmp(*regex1, *regex2))
       return cmp;
   return !!*regex1 - !!*regex2;
-}
-
-unsigned regex_size(struct regex *regex) {
-  // see `struct regex` for caveats. this measure is irrelevant the vast
-  // majority of the time because structural sharing is rarely ever expanded out
-  return regex->size;
 }
 
 int regex_cmp(struct regex *regex1, struct regex *regex2) {
@@ -218,354 +216,6 @@ int regex_cmp(struct regex *regex1, struct regex *regex2) {
   }
 
   abort(); // should have diverged
-}
-
-static size_t regexes_len(struct regex *regexes[]) {
-  // borrows its argument
-
-  struct regex **regex = regexes;
-  while (*regex)
-    regex++;
-  return regex - regexes;
-}
-
-static struct regex **regexes_insert(struct regex *regexes[],
-                                     struct regex *elem) {
-  // insert borrowed element `elem` into the owned sorted array `regexes` if it
-  // is not already present
-
-  // find the insertion spot
-  for (; *regexes && regex_cmp(elem, *regexes) < 0; regexes++)
-    ;
-  struct regex **regex = regexes;
-  if (*regex && regex_cmp(elem, *regex) == 0)
-    return regexes; // `elem` already present
-  elem = regex_incref(elem);
-  // scooch remaining elements over
-  for (struct regex *temp; elem; regex++)
-    temp = *regex, *regex = elem, elem = temp;
-  *regex = elem;
-  return regexes;
-}
-
-// smart constructors for `struct regex`. they return regular expressions
-// that are in a quasi-normal form by eliminating neutral elements, collapsing
-// annihilators, sorting the children of commutative operators, and so on. when
-// constructing a DFA (specifically, in `dfa_step`) we need to check regexes
-// for equivalence, but that's too hard a problem so instead we settle for a
-// subrelation of "similarity" that we define as structural equality of quasi-
-// normal forms. `regex_cmp` computes structural equality
-
-struct regex *regex_alt(struct regex *children[]) {
-  bool nullable = false;
-  bool eps_child = false;
-  bool negeps_child = false;
-  size_t flat_len = regexes_len(children);
-  for (struct regex **child = children; *child; child++) {
-    nullable |= (*child)->nullable && *child != regex_eps();
-    eps_child |= *child == regex_eps();
-    negeps_child |= *child == regex_negeps();
-    if ((*child)->type == TYPE_ALT)
-      flat_len += regexes_len((*child)->children) - 1;
-    // r|% |- %
-    // %|r |- %
-    if (*child == regex_univ())
-      return regexes_decref(children), regex_univ();
-  }
-
-  // r|(!) |- %, if nu(r)
-  // (!)|r |- %, if nu(r)
-  // r|(!) |- (!), if !nu(r)
-  // (!)|r |- (!), if !nu(r)
-  if (negeps_child && (nullable || eps_child))
-    return regexes_decref(children), regex_univ();
-  if (negeps_child && !(nullable || eps_child))
-    return regexes_decref(children), regex_negeps();
-
-  unsigned size = 1;
-  struct regex *flat_children[flat_len + 1];
-  *flat_children = NULL;
-  for (struct regex **child = children; *child; child++) {
-    // r|() |- r, if nu(r)
-    // ()|r |- r, if nu(r)
-    if (nullable && *child == regex_eps())
-      ;
-    // r|r |- r
-    // r|[] |- r
-    // []|r |- r
-    // r|(s|t) |- r|s|t
-    // (r|s)|t |- r|s|t
-    // r|s |- s|r, if cmp(r, s) < 0
-    else if ((*child)->type == TYPE_ALT) {
-      struct regex **regex = flat_children;
-      for (struct regex **subchild = (*child)->children; *subchild; subchild++)
-        regex = regexes_insert(regex, *subchild), size += (*subchild)->size;
-    } else
-      regexes_insert(flat_children, *child), size += (*child)->size;
-    regex_decref(*child);
-  }
-
-  nullable |= eps_child;
-
-  // [] |- []
-  if (!*flat_children)
-    return regex_empty();
-
-  // r |- r
-  if (!flat_children[1])
-    return *flat_children;
-
-  struct regex *regex =
-      regex_alloc(flat_children, TYPE_ALT, .nullable = nullable);
-  return regex->size = size, regex;
-}
-
-struct regex *regex_compl(struct regex *child) {
-  if (child == regex_univ())
-    return regex_decref(child), regex_empty(); // !% |- []
-  if (child == regex_empty())
-    return regex_decref(child), regex_univ(); // ![] |- %
-  if (child == regex_eps())
-    return regex_decref(child), regex_negeps(); // !() |- (!)
-  if (child == regex_negeps())
-    return regex_decref(child), regex_eps(); // !(!) |- ()
-  if (child->type == TYPE_COMPL) {
-    struct regex *subchild = regex_incref(*child->children);
-    return regex_decref(child), subchild; // !!r |- r
-  }
-
-  unsigned size = 1 + child->size;
-  bool nullable = !child->nullable;
-
-  struct regex *regex =
-      regex_alloc(REGEXES(child), TYPE_COMPL, .nullable = nullable);
-  return regex->size = size, regex->nullable = nullable, regex;
-}
-
-struct regex *regex_concat(struct regex *children[]) {
-  bool nullable = true;
-  bool univ_child = false;
-  bool negeps_child = false;
-  size_t flat_len = regexes_len(children);
-  for (struct regex **child = children; *child; child++) {
-    nullable &= (*child)->nullable || *child == regex_negeps();
-    univ_child |= *child == regex_univ();
-    negeps_child |= *child == regex_negeps();
-
-    if ((*child)->type == TYPE_CONCAT)
-      flat_len += regexes_len((*child)->children) - 1;
-    // r[] |- []
-    // []r |- []
-    if (*child == regex_empty())
-      return regexes_decref(children), regex_empty();
-  }
-
-  // r% |- %, if nu(r)
-  // %r |- %, if nu(r)
-  // r(!) |- (!), if nu(r)
-  // (!)r |- (!), if nu(r)
-  if (univ_child && (nullable && !negeps_child))
-    return regexes_decref(children), regex_univ();
-  if (negeps_child && (nullable && !negeps_child))
-    return regexes_decref(children), regex_negeps();
-
-  unsigned size = 1;
-  struct regex *flat_children[flat_len + 1], **flat_child = flat_children;
-  for (struct regex **child = children; *child; child++) {
-    // r() |- r
-    // ()r |- r
-    // r(st) |- rst
-    // (rs)t |- rst
-    if ((*child)->type == TYPE_CONCAT)
-      for (struct regex **subchild = (*child)->children; *subchild; subchild++)
-        *flat_child++ = regex_incref(*subchild), size += (*subchild)->size;
-    else
-      *flat_child++ = regex_incref(*child), size += (*child)->size;
-    regex_decref(*child);
-  }
-  *flat_child = NULL;
-
-  nullable &= !negeps_child;
-
-  // () |- ()
-  if (!*flat_children)
-    return regex_eps();
-
-  // r |- r
-  if (!flat_children[1])
-    return *flat_children;
-
-  struct regex *regex =
-      regex_alloc(flat_children, TYPE_CONCAT, .nullable = nullable);
-  return regex->size = size, regex;
-}
-
-static struct regex *regex_repeat_prev(struct regex *prev, struct regex *child,
-                                       unsigned lower, unsigned upper);
-struct regex *regex_repeat(struct regex *child, unsigned lower,
-                           unsigned upper) {
-  if (upper == 0)
-    return regex_decref(child), regex_eps(); // r{0} |- ()
-  if (lower == 1 && upper == 1)
-    return child; // r{1} |- r
-  if (child == regex_eps())
-    return child; // (){m,n} |- ()
-  if (child == regex_univ())
-    return child; // %{m,n+1} |- %
-  if (child == regex_empty())
-    if (lower == 0)
-      return regex_decref(child), regex_eps(); // []{0,n} |- ()
-    else if (lower != 0)
-      return child; // []{m+1,n} |- []
-  if (child == regex_negeps())
-    if (lower == 0)
-      return regex_decref(child), regex_univ(); // (!){0,n+1} |- %
-    else if (lower == 1)
-      return child; // (!){1,n} |- (!)
-  if (child->type == TYPE_SYMSET && child->upper && upper == UINT_MAX)
-    if (lower == 0)
-      return regex_decref(child), regex_univ(); // .* |- %
-    else if (lower == 1)
-      return regex_decref(child), regex_negeps(); // .+ |- (!)
-  // claim: if M=N or (n-m)M+1 >= m then r{m,n}{M,N} |- r{mM,nN}
-  // proof: the lowest attainable count is mM and the greatest is nN. we need to
-  // show that every count in [mM, nN] is attainable. for any fixed K in [M, N],
-  // the counts [mK, nK] are attainable by iterating the inner quantifier. the
-  // union of these intervals will cover [mM, nN] if successive intervals are
-  // adjacent or overlapping, that is, if nK+1 >= m(K+1) for all K in [M, N-1].
-  // rearranging, we require (n-m)K+1 >= m for all K in [M, N-1]. the left-hand
-  // side of the inequality is increasing in K, so if it holds for K=M it will
-  // hold for all K in [M, N-1]. when M=N, the statement holds trivially; when
-  // (n-m)M+1 >= m, the inequality holds for K=M.
-  if (child->type == TYPE_REPEAT &&
-      (upper == lower || child->upper == UINT_MAX ||
-       (child->upper - child->lower) * lower + 1 >= child->lower)) {
-    bool bounded = upper != UINT_MAX && child->upper != UINT_MAX;
-    // don't merge if the resulting bounds would overflow
-    if (child->lower <= UINT_MAX / lower &&
-        (!bounded || child->upper <= UINT_MAX / upper)) {
-      lower = child->lower * lower;
-      upper = bounded ? child->upper * upper : UINT_MAX;
-      struct regex *repeat = regex_repeat_prev(
-          child, regex_incref(*child->children), lower, upper);
-      return regex_decref(child), repeat;
-    }
-  }
-
-  unsigned size = 1 + child->size;
-  bool nullable = lower == 0 || child->nullable;
-
-  struct regex *regex = regex_alloc(REGEXES(child), TYPE_REPEAT, .lower = lower,
-                                    .upper = upper, .nullable = nullable);
-  return regex->size = size, regex;
-}
-
-struct regex *regex_symset(symset_t *symset) {
-  bool empty = 1, upper = 1;
-  for (int i = 0; i < sizeof(*symset); i++)
-    empty &= (*symset)[i] == 0x00, upper &= (*symset)[i] == 0xff;
-  if (empty)
-    return regex_empty(); // [] |- []
-
-  unsigned size = 1;
-  bool nullable = false;
-
-  struct regex *regex = regex_alloc(REGEXES(NULL), TYPE_SYMSET, .upper = upper,
-                                    .nullable = nullable);
-  memcpy(regex->symset, *symset, sizeof(*symset));
-  return regex->size = size, regex;
-}
-
-// wrappers around the smart constructors, for structural recursion. when
-// calling the underlying smart constructor would yield a regular expression
-// that is structurally equal to `prev`, return `prev` instead. borrow `prev`
-// but move in `child` and `children`
-
-static struct regex *regex_alt_prev(struct regex *prev,
-                                    struct regex *children[]) {
-  if (regexes_cmp(prev->children, children) == 0)
-    return regexes_decref(children), regex_incref(prev);
-  return regex_alt(children);
-}
-
-static struct regex *regex_compl_prev(struct regex *prev, struct regex *child) {
-  if (regex_cmp(*prev->children, child) == 0)
-    return regex_decref(child), regex_incref(prev);
-  return regex_compl(child);
-}
-
-static struct regex *regex_concat_prev(struct regex *prev,
-                                       struct regex *children[]) {
-  if (regexes_cmp(prev->children, children) == 0)
-    return regexes_decref(children), regex_incref(prev);
-  return regex_concat(children);
-}
-
-static struct regex *regex_repeat_prev(struct regex *prev, struct regex *child,
-                                       unsigned lower, unsigned upper) {
-  if (regex_cmp(*prev->children, child) == 0 && prev->lower == lower &&
-      prev->upper == upper)
-    return regex_decref(child), regex_incref(prev);
-  return regex_repeat(child, lower, upper);
-}
-
-static struct regex *regex_symset_prev(struct regex *prev, symset_t *symset) {
-  if (memcmp(prev->symset, symset, sizeof(*symset)) == 0)
-    return regex_incref(prev);
-  return regex_symset(symset);
-}
-
-// shorthands for ALTs and CONCATs that have no children. equivalent to
-// calling the underlying smart constructors with `children = REGEXES(NULL)`.
-// they allocate memory once and always return the same pointers, which means
-// `regex_cmp` can report equality without a memory access
-
-struct regex *regex_empty(void) {
-  // empty set regex /[]/
-  static struct regex *empty = NULL;
-  if (empty == NULL)
-    empty = regex_alloc(REGEXES(NULL), TYPE_ALT, .nullable = false);
-  return empty->refcount = INT_MAX, empty;
-}
-
-struct regex *regex_univ(void) {
-  // universal set regex /%/
-  static struct regex *univ = NULL;
-  if (univ == NULL)
-    univ = regex_alloc(REGEXES(regex_empty()), TYPE_COMPL, .nullable = true);
-  return univ->refcount = INT_MAX, univ;
-}
-
-struct regex *regex_eps(void) {
-  // epsilon regex /()/
-  static struct regex *eps = NULL;
-  if (eps == NULL)
-    eps = regex_alloc(REGEXES(NULL), TYPE_CONCAT, .nullable = true);
-  return eps->refcount = INT_MAX, eps;
-}
-
-struct regex *regex_negeps(void) {
-  // negated epsilon regex /(!)/
-  static struct regex *negeps = NULL;
-  if (negeps == NULL)
-    negeps = regex_alloc(REGEXES(regex_eps()), TYPE_COMPL, .nullable = false);
-  return negeps->refcount = INT_MAX, negeps;
-}
-
-void regex_dump(struct regex *regex, int indent) {
-  // borrows its argument
-
-  char *types[] = {"ALT", "COMPL", "CONCAT", "REPEAT", "SYMSET"};
-  printf("%*s%s", indent, "", types[regex->type]);
-
-  if (regex->type == TYPE_REPEAT)
-    printf(" %d TO %d", regex->lower, regex->upper);
-  if (regex->type == TYPE_SYMSET)
-    printf(" %s", symset_fmt(regex->symset));
-
-  putchar('\n');
-  for (struct regex **child = regex->children; *child; child++)
-    regex_dump(*child, indent + 2);
 }
 
 static size_t regex_fmt_len(struct regex *regex, enum regex_type prec) {
@@ -693,6 +343,529 @@ static char *regex_fmt(struct regex *regex, char *buf, enum regex_type prec) {
   return *buf = '\0', buf;
 }
 
+void regex_dump(struct regex *regex, int indent) {
+  // borrows its argument
+
+  char *types[] = {"ALT", "COMPL", "CONCAT", "REPEAT", "SYMSET"};
+  printf("%*s%s", indent, "", types[regex->type]);
+
+  if (regex->type == TYPE_REPEAT)
+    printf(" %d TO %d", regex->lower, regex->upper);
+  if (regex->type == TYPE_SYMSET)
+    printf(" %s", symset_fmt(regex->symset));
+
+  putchar('\n');
+  for (struct regex **child = regex->children; *child; child++)
+    regex_dump(*child, indent + 2);
+}
+
+static struct regex **regexes_insert(struct regex *regexes[],
+                                     struct regex *elem) {
+  // insert borrowed element `elem` into the owned sorted array `regexes` if it
+  // is not already present
+
+  // find the insertion spot
+  while (*regexes && regex_cmp(elem, *regexes) < 0)
+    regexes++;
+  struct regex **regex = regexes;
+  if (*regex && regex_cmp(elem, *regex) == 0)
+    return regexes; // `elem` already present
+  elem = regex_incref(elem);
+  // scooch remaining elements over
+  for (struct regex *temp; elem; regex++)
+    temp = *regex, *regex = elem, elem = temp;
+  *regex = elem;
+  return regexes;
+}
+
+// smart constructors for `struct regex`. they return regular expressions
+// that are in a quasi-normal form by eliminating neutral elements, collapsing
+// annihilators, sorting the children of commutative operators, and so on. when
+// constructing a DFA (specifically, in `dfa_step`) we need to check regexes
+// for equivalence, but that's too hard a problem so instead we settle for a
+// subrelation of "similarity" that we define as structural equality of quasi-
+// normal forms. `regex_cmp` computes structural equality
+
+struct regex *regex_alt(struct regex *children[]) {
+  bool nullable = false;     // () children excluded, some child is nullable
+  bool eps_child = false;    // some child is ()
+  bool negeps_child = false; // some child is (!)
+  size_t flat_len = regexes_len(children);
+  for (struct regex **child = children; *child; child++) {
+    nullable |= (*child)->nullable && *child != regex_eps();
+    eps_child |= *child == regex_eps();
+    negeps_child |= *child == regex_negeps();
+
+    if ((*child)->type == TYPE_ALT)
+      flat_len += regexes_len((*child)->children) - 1;
+
+    // r|% |- %
+    // %|r |- %
+    if (*child == regex_univ())
+      return regexes_decref(children), regex_univ();
+  }
+
+  // r|(!) |- %, if nu(r)
+  // (!)|r |- %, if nu(r)
+  // r|(!) |- (!), if !nu(r)
+  // (!)|r |- (!), if !nu(r)
+  if (negeps_child && (nullable || eps_child))
+    return regexes_decref(children), regex_univ();
+  if (negeps_child && !(nullable || eps_child))
+    return regexes_decref(children), regex_negeps();
+
+  unsigned size = 1;
+  struct regex *flat_children[flat_len + 1];
+  *flat_children = NULL;
+  for (struct regex **child = children; *child; regex_decref(*child++)) {
+    // r|() |- r, if nu(r)
+    // ()|r |- r, if nu(r)
+    if (nullable && *child == regex_eps())
+      continue;
+
+    // r|r |- r
+    // r|[] |- r
+    // []|r |- r
+    // r|(s|t) |- r|s|t
+    // (r|s)|t |- r|s|t
+    // r|s |- s|r, if cmp(r, s) < 0
+    struct regex **flat_child = flat_children;
+    struct regex **subchildren =
+        (*child)->type == TYPE_ALT ? (*child)->children : REGEXES(*child);
+    for (struct regex **subchild = subchildren; *subchild; subchild++)
+      flat_child = regexes_insert(flat_child, *subchild),
+      size += (*subchild)->size;
+  }
+
+  nullable |= eps_child; // include () children back
+
+  // [] |- []
+  if (!*flat_children)
+    return regex_empty();
+
+  // r |- r
+  if (!flat_children[1])
+    return *flat_children;
+
+  struct regex *regex =
+      regex_alloc(flat_children, TYPE_ALT, .nullable = nullable);
+  return regex->size = size, regex;
+}
+
+struct regex *regex_compl(struct regex *child) {
+  if (child == regex_univ())
+    return regex_decref(child), regex_empty(); // !% |- []
+  if (child == regex_empty())
+    return regex_decref(child), regex_univ(); // ![] |- %
+  if (child == regex_eps())
+    return regex_decref(child), regex_negeps(); // !() |- (!)
+  if (child == regex_negeps())
+    return regex_decref(child), regex_eps(); // !(!) |- ()
+  if (child->type == TYPE_COMPL) {
+    struct regex *subchild = regex_incref(*child->children);
+    return regex_decref(child), subchild; // !!r |- r
+  }
+
+  unsigned size = 1 + child->size;
+  bool nullable = !child->nullable;
+
+  struct regex *regex =
+      regex_alloc(REGEXES(child), TYPE_COMPL, .nullable = nullable);
+  return regex->size = size, regex->nullable = nullable, regex;
+}
+
+struct regex *regex_concat(struct regex *children[]) {
+  bool nullable = true;      // (!) children excluded, all children are nullable
+  bool univ_child = false;   // some child is %
+  bool negeps_child = false; // some child is (!)
+  size_t flat_len = regexes_len(children);
+  for (struct regex **child = children; *child; child++) {
+    nullable &= (*child)->nullable || *child == regex_negeps();
+    univ_child |= *child == regex_univ();
+    negeps_child |= *child == regex_negeps();
+
+    if ((*child)->type == TYPE_CONCAT)
+      flat_len += regexes_len((*child)->children) - 1;
+
+    // r[] |- []
+    // []r |- []
+    if (*child == regex_empty())
+      return regexes_decref(children), regex_empty();
+  }
+
+  // r% |- %, if nu(r)
+  // %r |- %, if nu(r)
+  // r(!) |- (!), if nu(r)
+  // (!)r |- (!), if nu(r)
+  if (univ_child && (nullable && !negeps_child))
+    return regexes_decref(children), regex_univ();
+  if (negeps_child && (nullable && !negeps_child))
+    return regexes_decref(children), regex_negeps();
+
+  unsigned size = 1;
+  struct regex *flat_children[flat_len + 1], **flat_child = flat_children;
+  for (struct regex **child = children; *child; regex_decref(*child++)) {
+    // r() |- r
+    // ()r |- r
+    // r(st) |- rst
+    // (rs)t |- rst
+    struct regex **subchildren =
+        (*child)->type == TYPE_CONCAT ? (*child)->children : REGEXES(*child);
+    for (struct regex **subchild = subchildren; *subchild; subchild++)
+      *flat_child++ = regex_incref(*subchild), size += (*subchild)->size;
+  }
+  *flat_child = NULL;
+
+  nullable &= !negeps_child; // include (!) children back
+
+  // () |- ()
+  if (!*flat_children)
+    return regex_eps();
+
+  // r |- r
+  if (!flat_children[1])
+    return *flat_children;
+
+  struct regex *regex =
+      regex_alloc(flat_children, TYPE_CONCAT, .nullable = nullable);
+  return regex->size = size, regex;
+}
+
+static struct regex *regex_repeat_prev(struct regex *prev, struct regex *child,
+                                       unsigned lower, unsigned upper);
+struct regex *regex_repeat(struct regex *child, unsigned lower,
+                           unsigned upper) {
+  if (upper == 0)
+    return regex_decref(child), regex_eps(); // r{0} |- ()
+  if (lower == 1 && upper == 1)
+    return child; // r{1} |- r
+  if (child == regex_eps())
+    return child; // (){m,n} |- ()
+  if (child == regex_univ())
+    return child; // %{m,n+1} |- %
+  if (child == regex_empty())
+    if (lower == 0)
+      return regex_decref(child), regex_eps(); // []{,n} |- ()
+    else if (lower != 0)
+      return child; // []{m+1,n} |- []
+  if (child == regex_negeps())
+    if (lower == 0)
+      return regex_decref(child), regex_univ(); // (!){,n+1} |- %
+    else if (lower == 1)
+      return child; // (!){1,n} |- (!)
+  if (child->type == TYPE_SYMSET && child->upper && upper == UINT_MAX)
+    if (lower == 0)
+      return regex_decref(child), regex_univ(); // .* |- %
+    else if (lower == 1)
+      return regex_decref(child), regex_negeps(); // .+ |- (!)
+  // idea: we can merge two nested quantifiers if the inner quantifier can brige
+  // the gaps between increments of the outer quantifier. the condition weakens
+  // with every increment, so it is sufficient that it holds for the first one.
+  // claim: if M=N or (n-m)M+1 >= m then r{m,n}{M,N} |- r{mM,nN}
+  // proof: the lowest attainable count is mM and the greatest is nN. we need to
+  // show that every count in [mM, nN] is attainable. for any fixed K in [M, N],
+  // the counts [mK, nK] are attainable by iterating the inner quantifier. the
+  // union of these intervals will cover [mM, nN] if successive intervals are
+  // adjacent or overlapping, that is, if nK+1 >= m(K+1) for all K in [M, N-1].
+  // rearranging, we require (n-m)K+1 >= m for all K in [M, N-1]. the left-hand
+  // side of the inequality is increasing in K, so if it holds for K=M it will
+  // hold for all K in [M, N-1]. when M=N, the statement holds trivially; when
+  // (n-m)M+1 >= m, the inequality holds for K=M.
+  if (child->type == TYPE_REPEAT &&
+      (upper == lower || child->upper == UINT_MAX ||
+       (child->upper - child->lower) * lower + 1 >= child->lower)) {
+    bool bounded = upper != UINT_MAX && child->upper != UINT_MAX;
+    // don't merge if the resulting bounds would overflow
+    if (child->lower <= UINT_MAX / lower &&
+        (!bounded || child->upper <= UINT_MAX / upper)) {
+      lower = child->lower * lower;
+      upper = bounded ? child->upper * upper : UINT_MAX;
+      struct regex *repeat = regex_repeat_prev(
+          child, regex_incref(*child->children), lower, upper);
+      return regex_decref(child), repeat;
+    }
+  }
+
+  unsigned size = 1 + child->size;
+  bool nullable = lower == 0 || child->nullable;
+
+  struct regex *regex = regex_alloc(REGEXES(child), TYPE_REPEAT, .lower = lower,
+                                    .upper = upper, .nullable = nullable);
+  return regex->size = size, regex;
+}
+
+struct regex *regex_symset(symset_t *symset) {
+  bool empty = 1, upper = 1;
+  for (int i = 0; i < sizeof(*symset); i++)
+    empty &= (*symset)[i] == 0x00, upper &= (*symset)[i] == 0xff;
+  if (empty)
+    return regex_empty(); // [] |- []
+
+  unsigned size = 1;
+  bool nullable = false;
+
+  struct regex *regex = regex_alloc(REGEXES(NULL), TYPE_SYMSET, .upper = upper,
+                                    .nullable = nullable);
+  memcpy(regex->symset, *symset, sizeof(*symset));
+  return regex->size = size, regex;
+}
+
+// wrappers around the smart constructors, for structural recursion. when
+// calling the underlying smart constructor would yield a regular expression
+// that is structurally equal to `prev`, return `prev` instead. borrow `prev`
+// but move in `child` and `children`
+
+static struct regex *regex_alt_prev(struct regex *prev,
+                                    struct regex *children[]) {
+  if (prev->type == TYPE_ALT && regexes_cmp(prev->children, children) == 0)
+    return regexes_decref(children), regex_incref(prev);
+  return regex_alt(children);
+}
+
+static struct regex *regex_compl_prev(struct regex *prev, struct regex *child) {
+  if (prev->type == TYPE_COMPL && regex_cmp(*prev->children, child) == 0)
+    return regex_decref(child), regex_incref(prev);
+  return regex_compl(child);
+}
+
+static struct regex *regex_concat_prev(struct regex *prev,
+                                       struct regex *children[]) {
+  if (prev->type == TYPE_CONCAT && regexes_cmp(prev->children, children) == 0)
+    return regexes_decref(children), regex_incref(prev);
+  return regex_concat(children);
+}
+
+static struct regex *regex_repeat_prev(struct regex *prev, struct regex *child,
+                                       unsigned lower, unsigned upper) {
+  if (prev->type == TYPE_REPEAT && regex_cmp(*prev->children, child) == 0 &&
+      prev->lower == lower && prev->upper == upper)
+    return regex_decref(child), regex_incref(prev);
+  return regex_repeat(child, lower, upper);
+}
+
+static struct regex *regex_symset_prev(struct regex *prev, symset_t *symset) {
+  if (prev->type == TYPE_SYMSET &&
+      memcmp(prev->symset, symset, sizeof(*symset)) == 0)
+    return regex_incref(prev);
+  return regex_symset(symset);
+}
+
+// shorthands for ALTs and CONCATs that have no children. equivalent to
+// calling the underlying smart constructors with `children = REGEXES(NULL)`.
+// they allocate memory once and always return the same pointers, which means
+// `regex_cmp` can report equality without a memory access
+
+struct regex *regex_empty(void) {
+  // empty set regex /[]/
+  static struct regex *empty = NULL;
+  if (empty == NULL)
+    empty = regex_alloc(REGEXES(NULL), TYPE_ALT, .nullable = false);
+  return empty->refcount = INT_MAX, empty;
+}
+
+struct regex *regex_univ(void) {
+  // universal set regex /%/
+  static struct regex *univ = NULL;
+  if (univ == NULL)
+    univ = regex_alloc(REGEXES(regex_empty()), TYPE_COMPL, .nullable = true);
+  return univ->refcount = INT_MAX, univ;
+}
+
+struct regex *regex_eps(void) {
+  // epsilon regex /()/
+  static struct regex *eps = NULL;
+  if (eps == NULL)
+    eps = regex_alloc(REGEXES(NULL), TYPE_CONCAT, .nullable = true);
+  return eps->refcount = INT_MAX, eps;
+}
+
+struct regex *regex_negeps(void) {
+  // negated epsilon regex /(!)/
+  static struct regex *negeps = NULL;
+  if (negeps == NULL)
+    negeps = regex_alloc(REGEXES(regex_eps()), TYPE_COMPL, .nullable = false);
+  return negeps->refcount = INT_MAX, negeps;
+}
+
+static struct regex *regex_ignorecase_ref(struct regex *regex, bool dual) {
+  // ignorecase accepted language by canonical structural recursion. borrows its
+  // argument. if `!dual`, a word is included in the new language if and only if
+  // some case variation of it is present in the existing language. if `dual`, a
+  // word is included in the new language if and only if all case variations of
+  // it are present in the existing language
+
+  struct regex *children[regexes_len(regex->children) + 1];
+  memcpy(children, regex->children, sizeof(children));
+
+  switch (regex->type) {
+  case TYPE_ALT:
+    for (struct regex **child = children; *child; child++)
+      *child = regex_ignorecase_ref(*child, dual);
+    return regex_alt_prev(regex, children);
+  case TYPE_COMPL:
+    return regex_compl_prev(regex, regex_ignorecase_ref(*children, !dual));
+  case TYPE_CONCAT:
+    for (struct regex **child = children; *child; child++)
+      *child = regex_ignorecase_ref(*child, dual);
+    return regex_concat_prev(regex, children);
+  case TYPE_REPEAT:
+    return regex_repeat_prev(regex, regex_ignorecase_ref(*children, dual),
+                             regex->lower, regex->upper);
+  case TYPE_SYMSET:;
+    symset_t symset = {0};
+    memcpy(symset, regex->symset, sizeof(symset));
+    for (int chr = 0; chr < 256; chr++) {
+      if (symset_read(symset, chr) == !dual) {
+        symset_write(symset, tolower(chr), !dual);
+        symset_write(symset, toupper(chr), !dual);
+      }
+    }
+    return regex_symset_prev(regex, &symset);
+  }
+
+  abort(); // should have diverged
+}
+
+struct regex *regex_ignorecase(struct regex *regex, bool dual) {
+  struct regex *temp = regex_ignorecase_ref(regex, dual);
+  return regex_decref(regex), temp;
+}
+
+static struct regex *regex_reverse_ref(struct regex *regex) {
+  // reverse accepted language by canonical structural recursion. borrows
+  // its argument
+
+  struct regex *children[regexes_len(regex->children) + 1];
+  memcpy(children, regex->children, sizeof(children));
+
+  switch (regex->type) {
+  case TYPE_ALT:
+    for (struct regex **child = children; *child; child++)
+      *child = regex_reverse_ref(*child);
+    return regex_alt_prev(regex, children);
+  case TYPE_COMPL:
+    return regex_compl_prev(regex, regex_reverse_ref(*children));
+  case TYPE_CONCAT:;
+    size_t children_len = sizeof(children) / sizeof(*children) - 1;
+    for (struct regex **child = children; *child; child++)
+      *child = regex_reverse_ref(
+          regex->children[children + children_len - child - 1]);
+    return regex_concat_prev(regex, children);
+  case TYPE_REPEAT:
+    return regex_repeat_prev(regex, regex_reverse_ref(*children), regex->lower,
+                             regex->upper);
+  case TYPE_SYMSET:
+    return regex_incref(regex);
+  }
+
+  abort(); // should have diverged
+}
+
+struct regex *regex_reverse(struct regex *regex) {
+  struct regex *temp = regex_reverse_ref(regex);
+  return regex_decref(regex), temp;
+}
+
+static struct regex *regex_differentiate_ref(struct regex *regex, uint8_t chr) {
+  // differentiate `regex` with respect to `chr`. borrows its argument. caches
+  // the derivative it returns in `regex->delta`.
+  // a derivative of a regular expression with respect to a symbol is any
+  // regular expression that accepts exactly the strings that, if prepended by
+  // the symbol, would have been accepted by the original regular expression
+
+  if (regex->delta && symset_read(regex->symset, chr) == regex->sym_incl)
+    return regex_incref(regex->delta); // cache hit
+
+  struct regex *children[regexes_len(regex->children) + 1];
+  memcpy(children, regex->children, sizeof(children));
+
+  struct regex *delta = regex->delta ? regex->delta : regex_empty();
+
+  // compute the derivative of `regex` and store into `regex->delta`
+  switch (regex->type) {
+  case TYPE_ALT:
+    for (struct regex **child = children; *child; child++)
+      *child = regex_differentiate_ref(*child, chr);
+    regex->delta = regex_alt_prev(delta, children);
+    break;
+  case TYPE_COMPL:
+    regex->delta =
+        regex_compl_prev(delta, regex_differentiate_ref(*children, chr));
+    break;
+  case TYPE_CONCAT:
+    // this is a little mind-bendy. for each child, we differentiate it in-
+    // place, then concatenate that derivative with all subsequent children,
+    // then overwrite the child with that concatenation. we stop after the
+    // first non-nullable child then turn everything into an alternation
+    for (struct regex **child = children; *child; child++) {
+      bool nullable = (*child)->nullable;
+      *child = regex_differentiate_ref(*child, chr);
+      regexes_incref(child + 1);
+      *child = regex_concat(child);
+      if (!nullable)
+        child[1] = NULL;
+    }
+    regex->delta = regex_alt_prev(delta, children);
+    break;
+  case TYPE_REPEAT:
+    if (regex->upper == 0)
+      abort(); // `regex_repeat` constructor should have rewritten r{0} |- ()
+    unsigned lower = regex->lower, upper = regex->upper;
+    lower -= lower != 0, upper -= upper != UINT_MAX;
+    regex->delta = regex_concat(REGEXES(
+        regex_differentiate_ref(*children, chr),
+        regex_repeat_prev(delta, regex_incref(*children), lower, upper)));
+    break;
+  case TYPE_SYMSET:
+    regex->delta =
+        symset_read(regex->symset, chr) ? regex_eps() : regex_empty();
+  }
+
+  regex_decref(delta);
+
+  // come up with a conservative set of characters for which `regex->delta`
+  // holds and store into `regex->symset`
+  switch (regex->type) {
+  case TYPE_ALT:
+  case TYPE_CONCAT:
+    regex->sym_incl = true;
+    memset(regex->symset, 0xff, sizeof(regex->symset));
+    for (struct regex **child = regex->children; *child; child++) {
+      for (int i = 0; i < sizeof(regex->symset); i++)
+        regex->symset[i] &=
+            (*child)->symset[i] ^ (unsigned)(*child)->sym_incl - 1;
+      if (regex->type == TYPE_CONCAT && !(*child)->nullable)
+        break;
+    }
+    break;
+  case TYPE_COMPL:
+  case TYPE_REPEAT:
+    // child is unique so we can use a fast `memcpy` and inherit `sym_incl`
+    // instead of conditionally inverting like we do above
+    regex->sym_incl = (*regex->children)->sym_incl;
+    memcpy(regex->symset, (*regex->children)->symset, sizeof(regex->symset));
+    break;
+  case TYPE_SYMSET:
+    regex->sym_incl = symset_read(regex->symset, chr);
+  }
+
+  // reflexivity invariant: `chr` should always be a member of the conservative
+  // set of characters for which the derivative with respect to `chr` holds
+  if (symset_read(regex->symset, chr) != regex->sym_incl)
+    abort();
+
+  // printf("wrt 0x%02hhx\n", chr);
+  // regex_dump(regex, 0);
+  // regex_dump(regex->delta, 0);
+
+  return regex_incref(regex->delta);
+}
+
+struct regex *regex_differentiate(struct regex *regex, uint8_t chr) {
+  struct regex *temp = regex_differentiate_ref(regex, chr);
+  return regex_decref(regex), temp;
+}
+
 // a DFA state, and maybe an actual DFA too, depending on context. when treated
 // as a DFA, the first element of the linked list of states formed by `next` is
 // the initial state and subsequent elements enumerate all remaining states
@@ -729,6 +902,35 @@ int dfa_get_size(struct dstate *dfa) {
     if ((dstate->id = dfa_size++) == INT_MAX)
       abort();
   return dfa_size;
+}
+
+void dfa_dump(struct dstate *dfa) {
+  (void)dfa_get_size(dfa);
+
+  printf("graph LR\n");
+  printf("  I( ) --> %d\n", dfa->id);
+
+  for (struct dstate *ds1 = dfa; ds1; ds1 = ds1->next) {
+    if (ds1->accepting)
+      printf("  %d --> F( )\n", ds1->id);
+
+    for (struct dstate *ds2 = dfa; ds2; ds2 = ds2->next) {
+      bool empty = true;
+      symset_t transitions = {0};
+      for (int chr = 0; chr < 256; chr++)
+        if (ds1->transitions[chr] == ds2)
+          symset_write(transitions, chr, true), empty = false;
+
+      if (empty)
+        continue;
+
+      printf("  %d --", ds1->id);
+      for (char *fmt = symset_fmt(transitions); *fmt; fmt++)
+        // avoid breaking Mermaid
+        printf(strchr("\\\"#&{}()xo=- ", *fmt) ? "#%hhu;" : "%c", *fmt);
+      printf("--> %d\n", ds2->id);
+    }
+  }
 }
 
 static void leb128_put(uint8_t **p, int n) {
@@ -812,33 +1014,148 @@ struct dstate *dfa_deserialize(uint8_t *image, size_t *size) {
   return *dstates;
 }
 
-void dfa_dump(struct dstate *dfa) {
-  (void)dfa_get_size(dfa);
+void dfa_optimize(struct dstate *dfa) {
+  // mark "terminating" states. calling `dfa_minimize` before or after calling
+  // this function would be redundant. modifies `dfa` in-place
 
-  printf("graph LR\n");
-  printf("  I( ) --> %d\n", dfa->id);
+  for (struct dstate *dstate = dfa; dstate; dstate = dstate->next)
+    dstate->terminating = true;
 
+  // flag "terminating" states. a terminating state is a state which either
+  // always or never leads to an accepting state. a state is terminating if and
+  // only if all its transitions are terminating and have the same `accepting`
+  // value as that state. to avoid having to deal with cycles, we default to all
+  // states being terminating then iteratively rule out the ones that aren't.
+  for (bool done = false; done = !done;)
+    for (struct dstate *dstate = dfa; dstate; dstate = dstate->next)
+      if (dstate->terminating)
+        for (int chr = 0; chr < 256; chr++)
+          if (dstate->accepting != dstate->transitions[chr]->accepting ||
+              !dstate->transitions[chr]->terminating)
+            done = dstate->terminating = false;
+
+  // dfa_dump(dfa);
+}
+
+void dfa_minimize(struct dstate *dfa) {
+  // minimize `dfa` and mark "terminating" states. minimal DFAs are unique up to
+  // renumbering. calling `dfa_optimize` before or after calling this function
+  // would be redundant
+
+  int dfa_size = dfa_get_size(dfa);
+  struct dstate **dstates =
+      malloc(sizeof(*dstates) * dfa_size); // VLA is 35% slower
+  for (struct dstate *dstate = dfa; dstate; dstate = dstate->next)
+    dstates[dstate->id] = dstate;
+
+  // store distinguishability data in a symmetric matrix condensed using bitsets
+  uint8_t(*dis)[(dfa_size + 7) / 8] =
+      malloc(sizeof(*dis) * dfa_size); // VLA is 35% slower
+  memset(dis, 0x00, sizeof(*dis) * dfa_size);
+  // abuse `symset_read` and `symset_write`
+#define ARE_DIS(ID1, ID2) symset_read(dis[ID1], ID2)
+#define MAKE_DIS(ID1, ID2)                                                     \
+  symset_write(dis[ID1], ID2, true), symset_write(dis[ID2], ID1, true)
+
+  // flag indistinguishable states. a pair of states is indistinguishable if and
+  // only if both states have the same `accepting` value and their transitions
+  // are equal up to target state indistinguishability. to avoid dealing with
+  // cycles, we default to all states being indistinguishable then iteratively
+  // rule out the ones that aren't.
+  for (struct dstate *ds1 = dfa; ds1; ds1 = ds1->next)
+    for (struct dstate *ds2 = ds1->next; ds2; ds2 = ds2->next)
+      if (ds1->accepting != ds2->accepting)
+        MAKE_DIS(ds1->id, ds2->id);
+  for (bool done = false; done = !done;)
+    for (int id1 = 0; id1 < dfa_size; id1++)
+      for (int id2 = id1 + 1; id2 < dfa_size; id2++)
+        if (!ARE_DIS(id1, id2))
+          for (int chr = 0; chr < 256; chr++)
+            // use irreflexivity of distinguishability as a cheap precheck
+            if (dstates[id1]->transitions[chr] !=
+                dstates[id2]->transitions[chr])
+              if (ARE_DIS(dstates[id1]->transitions[chr]->id,
+                          dstates[id2]->transitions[chr]->id)) {
+                MAKE_DIS(id1, id2), done = false;
+                break;
+              }
+
+  // minimize the DFA by merging indistinguishable states. no need to prune
+  // unreachable states because the construction used by `ltre_determinize`
+  // yields a DFA with no unreachable states
   for (struct dstate *ds1 = dfa; ds1; ds1 = ds1->next) {
-    if (ds1->accepting)
-      printf("  %d --> F( )\n", ds1->id);
+    for (struct dstate *prev = ds1; prev; prev = prev->next) {
+      for (struct dstate *ds2; ds2 = prev->next;) {
+        if (ARE_DIS(ds1->id, ds2->id))
+          break;
 
-    for (struct dstate *ds2 = dfa; ds2; ds2 = ds2->next) {
-      bool empty = true;
-      symset_t transitions = {0};
-      for (int chr = 0; chr < 256; chr++)
-        if (ds1->transitions[chr] == ds2)
-          bitset_set(transitions, chr), empty = false;
+        // states are indistinguishable. merge them
+        for (struct dstate *dstate = dfa; dstate; dstate = dstate->next)
+          for (int chr = 0; chr < 256; chr++)
+            if (dstate->transitions[chr] == ds2)
+              dstate->transitions[chr] = ds1;
 
-      if (empty)
-        continue;
-
-      printf("  %d --", ds1->id);
-      for (char *fmt = symset_fmt(transitions); *fmt; fmt++)
-        // avoid breaking Mermaid
-        printf(strchr("\\\"#&{}()xo=- ", *fmt) ? "#%hhu;" : "%c", *fmt);
-      printf("--> %d\n", ds2->id);
+        prev->next = ds2->next, free(ds2);
+      }
     }
+
+    // flag "terminating" states. a terminating state is a state which either
+    // always or never leads to an accepting state. since `ds1` is now
+    // distinguishable from all other states, it is terminating if and only if
+    // all its transitions point to itself because, by definition, no other
+    // state accepts the same set of words it does (either all or none)
+    ds1->terminating = true;
+    for (int chr = 0; chr < 256; chr++)
+      if (ds1->transitions[chr] != ds1)
+        ds1->terminating = false;
   }
+
+#undef ARE_DIS
+#undef MAKE_DIS
+
+  // dfa_dump(dfa);
+  // printf("%d -> %d\n", dfa_size, dfa_get_size(dfa));
+
+  free(dstates), free(dis);
+}
+
+bool dfa_equivalent(struct dstate *dfa1, struct dstate *dfa2) {
+  // check whether `dfa1` and `dfa2` accept the same language. both DFAs must be
+  // minimal; see `ltre_minimize`. minimal DFAs are unique up to renumbering, so
+  // we just have to check for a graph isomorphism that preserves the initial
+  // state, accepting states, and transitions
+
+  int dfa_size = dfa_get_size(dfa1);
+  if (dfa_size != dfa_get_size(dfa2))
+    return false;
+  struct dstate *map[dfa_size]; // mapping of states from `dfa1` to `dfa2`
+  for (int id = 0; id < dfa_size; id++)
+    map[id] = NULL;
+
+  // come up with a tentative mapping by following transitions from the initial
+  // states. the mapping will be nonesensical when the DFAs are not equivalent,
+  // but that doesn't matter as long as the mapping is an isomorphism when the
+  // DFAs actually are equivalent
+  map[dfa1->id] = dfa2;
+  for (struct dstate *dstate = dfa1; dstate; dstate = dstate->next)
+    for (int chr = 0; chr < 256; chr++)
+      map[dstate->transitions[chr]->id] = map[dstate->id]->transitions[chr];
+
+  // now, ensure our tentative mapping is an isomorphism
+  if (map[dfa1->id] != dfa2)
+    return false; // ininitial state not preserved
+  for (struct dstate *dstate = dfa1; dstate; dstate = dstate->next) {
+    if (map[dstate->id] == NULL)
+      return false; // mapping is not a bijection
+    if (dstate->accepting != map[dstate->id]->accepting)
+      return false; // accepting states not preserved
+    for (int chr = 0; chr < 256; chr++)
+      if (map[dstate->transitions[chr]->id] !=
+          map[dstate->id]->transitions[chr])
+        return false; // transitions not preserved
+  }
+
+  return true;
 }
 
 // some invariants for parsers on parse error:
@@ -938,8 +1255,7 @@ static void parse_shorthand(symset_t *symset, char **pattern, char **error) {
 
 #define RETURN_SYMSET(PRED)                                                    \
   for (int chr = 0; chr < 256; chr++)                                          \
-    if (PRED(chr))                                                             \
-      bitset_set(*symset, chr);                                                \
+    symset_write(*symset, chr, PRED(chr));                                     \
   return
 
 #define CASE_PAIR(CHR, PRED)                                                   \
@@ -963,6 +1279,7 @@ static void parse_shorthand(symset_t *symset, char **pattern, char **error) {
     CASE_PAIR('h', isxdigit);
 #define ISASCII(CHR) !(CHR & ~0x7F)
     CASE_PAIR('z', ISASCII);
+#undef ISASCII
   }
 
 #undef RETURN_SYMSET
@@ -1036,7 +1353,7 @@ static void parse_symset(symset_t *symset, char **pattern, char **error) {
   memset(symset, 0x00, sizeof(*symset));
   uint8_t chr = lower;
   do // character range wraparound
-    bitset_set(*symset, chr);
+    symset_write(*symset, chr, true);
   while (++chr != upper);
   goto process_compl;
 
@@ -1255,8 +1572,8 @@ struct regex *ltre_fixed_string(char *string) {
 
   symset_t symset = {0};
   struct regex *children[strlen(string) + 1], **child = children;
-  for (char *p = string; *p; bitset_clr(symset, *p++))
-    bitset_set(symset, *p), *child++ = regex_symset(&symset);
+  for (char *p = string; *p; symset_write(symset, *p++, false))
+    symset_write(symset, *p, true), *child++ = regex_symset(&symset);
   *child = NULL;
 
   return regex_concat(children);
@@ -1270,180 +1587,6 @@ char *ltre_stringify(struct regex *regex) {
   char *pattern = malloc(regex_fmt_len(regex, 0) + 1);
   (void)regex_fmt(regex, pattern, 0);
   return regex_decref(regex), pattern;
-}
-
-static struct regex *regex_ignorecase_ref(struct regex *regex, bool dual) {
-  // ignorecase accepted language by canonical structural recursion. borrows its
-  // argument. if `!dual`, a word is included in the new language if and only if
-  // some case variation of it is present in the existing language. if `dual`, a
-  // word is included in the new language if and only if all case variations of
-  // it are present in the existing language
-
-  struct regex *children[regexes_len(regex->children) + 1];
-  memcpy(children, regex->children, sizeof(children));
-
-  switch (regex->type) {
-  case TYPE_ALT:
-    for (struct regex **child = children; *child; child++)
-      *child = regex_ignorecase_ref(*child, dual);
-    return regex_alt_prev(regex, children);
-  case TYPE_COMPL:
-    return regex_compl_prev(regex, regex_ignorecase_ref(*children, !dual));
-  case TYPE_CONCAT:
-    for (struct regex **child = children; *child; child++)
-      *child = regex_ignorecase_ref(*child, dual);
-    return regex_concat_prev(regex, children);
-  case TYPE_REPEAT:
-    return regex_repeat_prev(regex, regex_ignorecase_ref(*children, dual),
-                             regex->lower, regex->upper);
-  case TYPE_SYMSET:;
-    symset_t symset = {0};
-    memcpy(symset, regex->symset, sizeof(symset));
-    for (int chr = 0; chr < 256; chr++) {
-      if (bitset_get(symset, chr) == !dual) {
-        (!dual ? bitset_set : bitset_clr)(symset, tolower(chr));
-        (!dual ? bitset_set : bitset_clr)(symset, toupper(chr));
-      }
-    }
-    return regex_symset_prev(regex, &symset);
-  }
-
-  abort(); // should have diverged
-}
-
-struct regex *regex_ignorecase(struct regex *regex, bool dual) {
-  struct regex *temp = regex_ignorecase_ref(regex, dual);
-  return regex_decref(regex), temp;
-}
-
-static struct regex *regex_reverse_ref(struct regex *regex) {
-  // reverse accepted language by canonical structural recursion. borrows
-  // its argument
-
-  struct regex *children[regexes_len(regex->children) + 1];
-  memcpy(children, regex->children, sizeof(children));
-
-  switch (regex->type) {
-  case TYPE_ALT:
-    for (struct regex **child = children; *child; child++)
-      *child = regex_reverse_ref(*child);
-    return regex_alt_prev(regex, children);
-  case TYPE_COMPL:
-    return regex_compl_prev(regex, regex_reverse_ref(*children));
-  case TYPE_CONCAT:;
-    size_t children_len = sizeof(children) / sizeof(*children) - 1;
-    for (struct regex **child = children; *child; child++)
-      *child = regex_reverse_ref(
-          regex->children[children + children_len - child - 1]);
-    return regex_concat_prev(regex, children);
-  case TYPE_REPEAT:
-    return regex_repeat_prev(regex, regex_reverse_ref(*children), regex->lower,
-                             regex->upper);
-  case TYPE_SYMSET:
-    return regex_incref(regex);
-  }
-
-  abort(); // should have diverged
-}
-
-struct regex *regex_reverse(struct regex *regex) {
-  struct regex *temp = regex_reverse_ref(regex);
-  return regex_decref(regex), temp;
-}
-
-static struct regex *regex_differentiate_ref(struct regex *regex, uint8_t chr) {
-  // differentiate `regex` with respect to `chr`. borrows its argument. caches
-  // the derivative it returns in `regex->delta`.
-  // a derivative of a regular expression with respect to a symbol is any
-  // regular expression that accepts exactly the strings that, if prepended by
-  // the symbol, would have been accepted by the original regular expression
-
-  if (regex->delta && bitset_get(regex->symset, chr) == regex->sym_incl)
-    return regex_incref(regex->delta); // cache hit
-
-  if (regex->delta)
-    regex->delta = regex_decref(regex->delta);
-
-  struct regex *children[regexes_len(regex->children) + 1];
-  memcpy(children, regex->children, sizeof(children));
-
-  // compute the derivative of `regex` and store into `regex->delta`
-  switch (regex->type) {
-  case TYPE_ALT:
-    for (struct regex **child = children; *child; child++)
-      *child = regex_differentiate_ref(*child, chr);
-    regex->delta = regex_alt(children);
-    break;
-  case TYPE_COMPL:
-    regex->delta = regex_compl(regex_differentiate_ref(*children, chr));
-    break;
-  case TYPE_CONCAT:
-    // this is a little mind-bendy. for each child, we differentiate it in-
-    // place, then concatenate that derivative with all subsequent children,
-    // then overwrite the child with that concatenation. we stop after the
-    // first non-nullable child then turn everything into an alternation
-    for (struct regex **child = children; *child; child++) {
-      bool nullable = (*child)->nullable;
-      *child = regex_differentiate_ref(*child, chr);
-      regexes_incref(child + 1);
-      *child = regex_concat(child);
-      if (!nullable)
-        child[1] = NULL;
-    }
-    regex->delta = regex_alt(children);
-    break;
-  case TYPE_REPEAT:;
-    unsigned lower = regex->lower, upper = regex->upper;
-    lower -= lower != 0, upper -= upper != 0 && upper != UINT_MAX;
-    regex->delta = regex_concat(
-        REGEXES(regex_differentiate_ref(*children, chr),
-                regex_repeat(regex_incref(*children), lower, upper)));
-    break;
-  case TYPE_SYMSET:
-    regex->delta = bitset_get(regex->symset, chr) ? regex_eps() : regex_empty();
-  }
-
-  // come up with a conservative set of characters for which `regex->delta`
-  // holds and store into `regex->symset`
-  switch (regex->type) {
-  case TYPE_ALT:
-  case TYPE_CONCAT:
-    regex->sym_incl = true;
-    memset(regex->symset, 0xff, sizeof(regex->symset));
-    for (struct regex **child = regex->children; *child; child++) {
-      for (int i = 0; i < sizeof(regex->symset); i++)
-        regex->symset[i] &=
-            (*child)->symset[i] ^ (unsigned)(*child)->sym_incl - 1;
-      if (regex->type == TYPE_CONCAT && !(*child)->nullable)
-        break;
-    }
-    break;
-  case TYPE_COMPL:
-  case TYPE_REPEAT:
-    // child is unique so we can use a fast `memcpy` and inherit `sym_incl`
-    // instead of conditionally inverting like we do above
-    regex->sym_incl = (*regex->children)->sym_incl;
-    memcpy(regex->symset, (*regex->children)->symset, sizeof(regex->symset));
-    break;
-  case TYPE_SYMSET:
-    regex->sym_incl = bitset_get(regex->symset, chr);
-  }
-
-  // reflexivity invariant: `chr` should always be a member of the conservative
-  // set of characters for which the derivative with respect to `chr` holds
-  if (bitset_get(regex->symset, chr) != regex->sym_incl)
-    abort();
-
-  // printf("wrt 0x%02hhx\n", chr);
-  // regex_dump(regex, 0);
-  // regex_dump(regex->delta, 0);
-
-  return regex_incref(regex->delta);
-}
-
-struct regex *regex_differentiate(struct regex *regex, uint8_t chr) {
-  struct regex *temp = regex_differentiate_ref(regex, chr);
-  return regex_decref(regex), temp;
 }
 
 static void dfa_step(struct dstate **dfap, struct dstate *dstate, uint8_t chr) {
@@ -1471,8 +1614,30 @@ static void dfa_step(struct dstate **dfap, struct dstate *dstate, uint8_t chr) {
   // `chr` transition, but also every other transition that leads to this
   // target state, all in one stroke
   for (int chr = 0; chr < 256; chr++)
-    if (bitset_get(dstate->regex->symset, chr) == dstate->regex->sym_incl)
+    if (symset_read(dstate->regex->symset, chr) == dstate->regex->sym_incl)
       dstate->transitions[chr] = *dstatep;
+}
+
+bool ltre_matches_lazy(struct dstate **dfap, uint8_t *input) {
+  // Thompson's algorithm, but for Brzozowski derivatives. lazily create new DFA
+  // states as we need them, marching the regex in lock step. cached DFA states
+  // are stored in `*dfap`. call initially with an empty cache using `*dfap =
+  // dstate_alloc(regex)`, and make sure to `dfa_free(*dfap)` when finished with
+  // this regex
+
+  struct dstate *dstate = *dfap;
+  for (; *input; dstate = dstate->transitions[*input++])
+    dfa_step(dfap, dstate, *input);
+
+  return dstate->accepting;
+}
+
+struct dstate *ltre_compile(struct regex *regex) {
+  // fully compile DFA. determinization followed by minimization. calling
+  // `dfa_optimize` or `dfa_minimize` after calling this function would
+  // be redundant
+  struct dstate *dfa = ltre_determinize(regex);
+  return dfa_minimize(dfa), dfa;
 }
 
 struct dstate *ltre_determinize(struct regex *regex) {
@@ -1485,158 +1650,17 @@ struct dstate *ltre_determinize(struct regex *regex) {
     for (int chr = 0; chr < 256; chr++)
       dfa_step(&dfa, dstate, chr);
 
+  // putchar('\n');
+  // for (struct dstate *dstate = dfa; dstate; dstate = dstate->next) {
+  //   char *pattern = ltre_stringify(regex_incref(dstate->regex));
+  //   puts(pattern), free(pattern);
+  // }
+
   for (struct dstate *dstate = dfa; dstate; dstate = dstate->next)
     dstate->regex = regex_decref(dstate->regex);
 
   // dfa_dump(dfa);
   return dfa;
-}
-
-void dfa_optimize(struct dstate *dfa) {
-  // mark "terminating" states. calling `dfa_minimize` before or after calling
-  // this function would be redundant. modifies `dfa` in-place
-
-  for (struct dstate *dstate = dfa; dstate; dstate = dstate->next)
-    dstate->terminating = true;
-
-  // flag "terminating" states. a terminating state is a state which either
-  // always or never leads to an accepting state. a state is terminating if and
-  // only if all its transitions are terminating and have the same `accepting`
-  // value as that state. to avoid having to deal with cycles, we default to all
-  // states being terminating then iteratively rule out the ones that aren't.
-  for (bool done = false; (done = !done);)
-    for (struct dstate *dstate = dfa; dstate; dstate = dstate->next)
-      if (dstate->terminating)
-        for (int chr = 0; chr < 256; chr++)
-          if (dstate->accepting != dstate->transitions[chr]->accepting ||
-              !dstate->transitions[chr]->terminating)
-            done = dstate->terminating = false;
-
-  // dfa_dump(dfa);
-}
-
-void dfa_minimize(struct dstate *dfa) {
-  // minimize `dfa` and mark "terminating" states. minimal DFAs are unique up to
-  // renumbering. calling `dfa_optimize` before or after calling this function
-  // would be redundant
-
-  int dfa_size = dfa_get_size(dfa);
-  struct dstate **dstates =
-      malloc(sizeof(*dstates) * dfa_size); // VLA is 35% slower
-  for (struct dstate *dstate = dfa; dstate; dstate = dstate->next)
-    dstates[dstate->id] = dstate;
-
-  // store distinguishability data in a symmetric matrix condensed using bitsets
-  uint8_t(*dis)[(dfa_size + 7) / 8] =
-      malloc(sizeof(*dis) * dfa_size); // VLA is 35% slower
-  memset(dis, 0x00, sizeof(*dis) * dfa_size);
-#define ARE_DIS(ID1, ID2) bitset_get(dis[ID1], ID2)
-#define MAKE_DIS(ID1, ID2) bitset_set(dis[ID1], ID2), bitset_set(dis[ID2], ID1)
-
-  // flag indistinguishable states. a pair of states is indistinguishable if and
-  // only if both states have the same `accepting` value and their transitions
-  // are equal up to target state indistinguishability. to avoid dealing with
-  // cycles, we default to all states being indistinguishable then iteratively
-  // rule out the ones that aren't.
-  for (struct dstate *ds1 = dfa; ds1; ds1 = ds1->next)
-    for (struct dstate *ds2 = ds1->next; ds2; ds2 = ds2->next)
-      if (ds1->accepting != ds2->accepting)
-        MAKE_DIS(ds1->id, ds2->id);
-  for (bool done = false; done = !done;)
-    for (int id1 = 0; id1 < dfa_size; id1++)
-      for (int id2 = id1 + 1; id2 < dfa_size; id2++)
-        if (!ARE_DIS(id1, id2))
-          for (int chr = 0; chr < 256; chr++)
-            // use irreflexivity of distinguishability as a cheap precheck
-            if (dstates[id1]->transitions[chr] !=
-                dstates[id2]->transitions[chr])
-              if (ARE_DIS(dstates[id1]->transitions[chr]->id,
-                          dstates[id2]->transitions[chr]->id)) {
-                MAKE_DIS(id1, id2), done = false;
-                break;
-              }
-
-  // minimize the DFA by merging indistinguishable states. no need to prune
-  // unreachable states because the powerset construction yields a DFA with
-  // no unreachable states
-  for (struct dstate *ds1 = dfa; ds1; ds1 = ds1->next) {
-    for (struct dstate *prev = ds1; prev; prev = prev->next) {
-      for (struct dstate *ds2; ds2 = prev->next;) {
-        if (ARE_DIS(ds1->id, ds2->id))
-          break;
-
-        // states are indistinguishable. merge them
-        for (struct dstate *dstate = dfa; dstate; dstate = dstate->next)
-          for (int chr = 0; chr < 256; chr++)
-            if (dstate->transitions[chr] == ds2)
-              dstate->transitions[chr] = ds1;
-
-        prev->next = ds2->next, free(ds2);
-      }
-    }
-
-    // flag "terminating" states. a terminating state is a state which either
-    // always or never leads to an accepting state. since `ds1` is now
-    // distinguishable from all other states, it is terminating if and only if
-    // all its transitions point to itself because, by definition, no other
-    // state accepts the same set of words as it does (either all or none)
-    ds1->terminating = true;
-    for (int chr = 0; chr < 256; chr++)
-      if (ds1->transitions[chr] != ds1)
-        ds1->terminating = false;
-  }
-
-  // dfa_dump(dfa);
-  // printf("%d -> %d\n", dfa_size, dfa_get_size(dfa));
-
-  free(dstates), free(dis);
-}
-
-bool dfa_equivalent(struct dstate *dfa1, struct dstate *dfa2) {
-  // check whether `dfa1` and `dfa2` accept the same language. both DFAs must be
-  // minimal; see `ltre_minimize`. minimal DFAs are unique up to renumbering, so
-  // we just have to check for a graph isomorphism that preserves the initial
-  // state, accepting states, and transitions
-
-  int dfa_size = dfa_get_size(dfa1);
-  if (dfa_size != dfa_get_size(dfa2))
-    return false;
-  struct dstate *map[dfa_size]; // mapping of states from `dfa1` to `dfa2`
-  for (int id = 0; id < dfa_size; id++)
-    map[id] = NULL;
-
-  // come up with a tentative mapping by following transitions from the initial
-  // states. the mapping will be nonesensical when the DFAs are not equivalent,
-  // but that doesn't matter as long as the mapping is an isomorphism when the
-  // DFAs actually are equivalent
-  map[dfa1->id] = dfa2;
-  for (struct dstate *dstate = dfa1; dstate; dstate = dstate->next)
-    for (int chr = 0; chr < 256; chr++)
-      map[dstate->transitions[chr]->id] = map[dstate->id]->transitions[chr];
-
-  // now, ensure our tentative mapping is an isomorphism
-  if (map[dfa1->id] != dfa2)
-    return false; // ininitial state not preserved
-  for (struct dstate *dstate = dfa1; dstate; dstate = dstate->next) {
-    if (map[dstate->id] == NULL)
-      return false; // mapping is not a bijection
-    if (dstate->accepting != map[dstate->id]->accepting)
-      return false; // accepting states not preserved
-    for (int chr = 0; chr < 256; chr++)
-      if (map[dstate->transitions[chr]->id] !=
-          map[dstate->id]->transitions[chr])
-        return false; // transitions not preserved
-  }
-
-  return true;
-}
-
-struct dstate *ltre_compile(struct regex *regex) {
-  // fully compile DFA. determinization followed by minimization. calling
-  // `dfa_optimize` or `dfa_minimize` after calling this function would
-  // be redundant
-  struct dstate *dfa = ltre_determinize(regex);
-  return dfa_minimize(dfa), dfa;
 }
 
 bool ltre_matches(struct dstate *dfa, uint8_t *input) {
@@ -1674,7 +1698,7 @@ struct regex *ltre_decompile(struct dstate *dfa) {
       symset_t transitions = {0};
       for (int chr = 0; chr < 256; chr++)
         if (ds1->transitions[chr] == ds2)
-          bitset_set(transitions, chr), empty = false;
+          symset_write(transitions, chr, true), empty = false;
 
       arrows[ds1->id][ds2->id] = NULL;
 
@@ -1762,18 +1786,4 @@ struct regex *ltre_decompile(struct dstate *dfa) {
   struct regex *regex = arrows[dfa_size][dfa_size];
   free(arrows);
   return regex ? regex : regex_empty();
-}
-
-bool ltre_matches_lazy(struct dstate **dfap, uint8_t *input) {
-  // Thompson's algorithm, but for Brzozowski derivatives. lazily create new DFA
-  // states as we need them, marching the regex in lock step. cached DFA states
-  // are stored in `*dfap`. call initially with an empty cache using `*dfap =
-  // dstate_alloc(regex)`, and make sure to `dfa_free(*dfap)` when finished with
-  // this regex
-
-  struct dstate *dstate = *dfap;
-  for (; *input; dstate = dstate->transitions[*input++])
-    dfa_step(dfap, dstate, *input);
-
-  return dstate->accepting;
 }

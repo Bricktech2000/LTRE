@@ -15,27 +15,26 @@ bool run(struct dstate *dfa) {
   // interactive use works best with `stty -icanon -echo -nl`
   for (int chr = 0;; dfa = dfa->transitions[chr]) {
     if (putchar(chr) == EOF)
-      goto done;
+      break;
 
     for (chr = 0; chr < 256; chr++)
       if (!dfa->transitions[chr]->terminating)
-        break;
-    if (chr == 256)
-      goto done;
+        goto found;
+    break;
 
-    for (int split = chr + 1; split < 256; split++)
-      if (!dfa->transitions[split]->terminating)
-        goto disambiguate;
+  found:
+    for (int c = chr + 1; c < 256; c++)
+      if (!dfa->transitions[c]->terminating)
+        goto ambiguous;
     continue;
 
-  disambiguate:
-    // do
+  ambiguous:
     if ((chr = getchar()) == EOF)
-      goto done;
-    // while (dfa->transitions[chr]->terminating);
+      break;
+    // if (dfa->transitions[chr]->terminating)
+    //   goto disambiguate;
   }
 
-done:
   return dfa->accepting;
 }
 
