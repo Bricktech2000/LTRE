@@ -898,8 +898,9 @@ void dfa_free(struct dstate *dstate) {
 int dfa_get_size(struct dstate *dfa) {
   // also populates `dstate.id` with unique identifiers
   int dfa_size = 0;
-  for (struct dstate *dstate = dfa; dstate; dstate = dstate->next)
-    if ((dstate->id = dfa_size++) == INT_MAX)
+  for (struct dstate *dstate = dfa; dstate;
+       dstate->id = dfa_size++, dstate = dstate->next)
+    if (dfa_size == INT_MAX)
       abort();
   return dfa_size;
 }
