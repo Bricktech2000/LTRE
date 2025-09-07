@@ -1666,8 +1666,8 @@ struct dstate *ltre_determinize(struct regex *regex) {
 
 bool ltre_matches(struct dstate *dfa, uint8_t *input) {
   // time linear in the input length :)
-  for (; !dfa->terminating && *input; input++)
-    dfa = dfa->transitions[*input];
+  while (!dfa->terminating && *input)
+    dfa = dfa->transitions[*input++];
   return dfa->accepting;
 }
 

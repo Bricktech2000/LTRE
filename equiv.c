@@ -5,15 +5,18 @@
 
 int main(void) {
   size_t len = 0, cap = 256;
-  char *nl, *line = malloc(cap);
-  while (fgets(line + len, cap - len, stdin) != NULL) {
-    if ((nl = memchr(line + len, '\n', cap - len)) == NULL) {
-      len = cap - 1, line = realloc(line, cap *= 2);
-      continue;
-    }
-    *nl = '\0', len = 0;
+  char *line = malloc(cap);
 
-    char *sep = memchr(line, '\t', nl - line);
+  for (; !feof(stdin); len = 0) {
+    for (int c; c = fgetc(stdin), c != EOF && c != '\n'; line[len++] = c)
+      len + 1 == cap ? line = realloc(line, cap *= 2) : 0;
+    line[len] = '\0';
+    if (ferror(stdin))
+      perror("fgetc"), exit(EXIT_FAILURE);
+    if (feof(stdin))
+      break;
+
+    char *sep = memchr(line, '\t', len);
     if (sep == NULL) {
       fprintf(stderr, "format error: could not find tab separator\n");
       continue;
@@ -38,7 +41,5 @@ int main(void) {
     dfa_free(dfa1), dfa_free(dfa2);
   }
 
-  if (!feof(stdin))
-    perror("fgets"), exit(EXIT_FAILURE);
   free(line);
 }

@@ -1,11 +1,14 @@
 #include "ltre.h"
 #include <ctype.h>
-#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef __unix__
+#include <fcntl.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#endif
 
 // steal implementation details
 struct dstate {
@@ -89,8 +92,9 @@ struct args parse_args(char **argv) {
 
   if (!*argv)
     fputs(USAGE HELP, stdout), exit(EXIT_FAILURE);
-  args.pattern = *argv;
-  args.files = ++argv;
+  args.pattern = *argv++;
+  static char *read_stdin[] = {"-", NULL};
+  args.files = *argv ? argv : read_stdin;
 
   if (smartcase) {
     // not trying to be clever here. /\D/ and /\x6A/, for instance, are treated
@@ -150,11 +154,11 @@ int main(int argc, char **argv) {
 
   struct dstate *dfa = ltre_compile(regex);
 
-#define OUTPUT_LINE                                                            \
+#define OUTPUT_LINE /* args.opts, file, lineno, lineoff, dfa, line, len */     \
   do {                                                                         \
     if (args.opts.count || args.opts.list)                                     \
       break;                                                                   \
-    uint8_t *p, *begin = line, *end = nl;                                      \
+    uint8_t *p, *begin = line, *end = line + len;                              \
     if (args.opts.onlymat && !args.opts.exact && !args.opts.invert) {          \
       p = end; /* leftmost */                                                  \
       for (struct dstate *dstate = rev_dfa;                                    \
@@ -162,7 +166,7 @@ int main(int argc, char **argv) {
         dstate = dstate->transitions[*--p];                                    \
       p = begin; /* longest */                                                 \
       for (struct dstate *dstate = fwd_dfa;                                    \
-           dstate->accepting ? end = p : 0, p < nl;)                           \
+           dstate->accepting ? end = p : 0, p < line + len;)                   \
         dstate = dstate->transitions[*p++];                                    \
     }                                                                          \
     if (args.opts.filehd)                                                      \
@@ -175,7 +179,7 @@ int main(int argc, char **argv) {
     fputc('\n', stdout);                                                       \
   } while (0)
 
-#define OUTPUT_FILE                                                            \
+#define OUTPUT_FILE /* args.opts, file, lineno, count */                       \
   do {                                                                         \
     if (!args.opts.count && !args.opts.list)                                   \
       break;                                                                   \
@@ -191,68 +195,85 @@ int main(int argc, char **argv) {
       printf("%s\n", *file);                                                   \
   } while (0)
 
-  if (!*args.files) {
-  read_stdin:;
-    char **file = &(char *){"<stdin>"}; // fun
+  for (char **file = args.files; *file; file++) {
+    FILE *fp = NULL;
+    if (strcmp(*file, "-") == 0)
+      fp = stdin;
+
+#ifdef __unix__
+    // on UNIX, when reading from a regular file and not stdin, memory-map the
+    // file to improve performance
+    else if (1) {
+      int fd = open(*file, O_RDONLY);
+      if (fd == -1)
+        perror("open"), exit(EXIT_FAILURE);
+      off_t size = lseek(fd, 0, SEEK_END);
+      if (size == -1)
+        perror("lseek"), exit(EXIT_FAILURE);
+      uint8_t *data = mmap(0, size, PROT_READ, MAP_PRIVATE, fd, 0);
+      if (data == MAP_FAILED)
+        perror("mmap"), exit(EXIT_FAILURE);
+
+      size_t lineno = 0, count = 0, lineoff = 0;
+      uint8_t *line = data, *p = data;
+
+      for (; p < data + size; line = ++p) {
+        struct dstate *dstate = dfa;
+        while (!dstate->terminating && p < data + size && *p != '\n')
+          dstate = dstate->transitions[*p++];
+        if (p < data + size && *p != '\n')
+          (p = memchr(p, '\n', data + size - p)) || (p = data + size);
+        size_t len = p - line;
+
+        if (lineno++, dstate->accepting && ++count)
+          OUTPUT_LINE;
+        lineoff += len + 1;
+      }
+
+      if (munmap(data, size) == -1)
+        perror("munmap"), exit(EXIT_FAILURE);
+
+      if (close(fd) == -1)
+        perror("close"), exit(EXIT_FAILURE);
+
+      OUTPUT_FILE;
+
+      continue;
+    }
+#endif
+
+    else if ((fp = fopen(*file, "r")) == NULL)
+      perror("fopen"), exit(EXIT_FAILURE);
+
     size_t lineno = 0, count = 0, lineoff = 0;
     size_t len = 0, cap = 256;
-    uint8_t *nl, *line = malloc(cap);
-    while (fgets((char *)line + len, cap - len, stdin) != NULL) {
-      if ((nl = memchr(line + len, '\n', cap - len)) == NULL) {
-        if (feof(stdin) ? nl = memchr(line + len, '\0', cap - len) : 0)
-          break;
-        len = cap - 1, line = realloc(line, cap *= 2);
-        continue;
-      }
-      *nl = '\0', len = 0;
+    uint8_t *line = malloc(cap);
 
-      if (lineno++, ltre_matches(dfa, line) && ++count)
+    for (; !feof(fp); len = 0) {
+      struct dstate *dstate = dfa;
+      for (int c; c = fgetc(fp), c != EOF && c != '\n'; line[len++] = c) {
+        len == cap ? line = realloc(line, cap *= 2) : 0;
+        dstate = dstate->transitions[c];
+      }
+      if (ferror(fp))
+        perror("fgetc"), exit(EXIT_FAILURE);
+      if (feof(fp) && len == 0)
+        break; // ignore partial line if it's empty
+
+      if (lineno++, dstate->accepting && ++count)
         OUTPUT_LINE;
-      lineoff += nl - line + 1;
+      lineoff += len + 1;
     }
 
-    if (!feof(stdin))
-      perror("fgets"), exit(EXIT_FAILURE);
     free(line);
 
     OUTPUT_FILE;
 
     // clear EOF indicator in case a file of '-' is supplied more than once
-    clearerr(stdin);
-  }
+    clearerr(fp);
 
-  for (char **file; *(file = args.files++);) {
-    if (strcmp(*file, "-") == 0)
-      goto read_stdin;
-
-    int fd = open(*file, O_RDONLY);
-    if (fd == -1)
-      perror("open"), exit(EXIT_FAILURE);
-    size_t len = lseek(fd, 0, SEEK_END);
-    uint8_t *data = mmap(0, len, PROT_READ, MAP_PRIVATE, fd, 0);
-
-    // intertwine `ltre_matches` within walking the file for maximum performance
-    size_t lineno = 0, count = 0, lineoff = 0;
-    struct dstate *dstate = dfa;
-    uint8_t *nl = data, *line = data;
-    for (; nl < data + len; line = ++nl) {
-      for (dstate = dfa;
-           !dstate->terminating && nl < data + len && *nl != '\n';)
-        dstate = dstate->transitions[*nl++];
-      if (nl < data + len && *nl != '\n') {
-        nl = memchr(nl, '\n', data + len - nl);
-        nl = nl ? nl : data + len;
-      }
-
-      if (lineno++, dstate->accepting && ++count)
-        OUTPUT_LINE;
-      lineoff += nl - line + 1;
-    }
-
-    if (close(fd) == -1)
-      perror("close"), exit(EXIT_FAILURE);
-
-    OUTPUT_FILE;
+    if (fp != stdin && fclose(fp) != 0)
+      perror("fclose"), exit(EXIT_FAILURE);
   }
 
   dfa_free(dfa);

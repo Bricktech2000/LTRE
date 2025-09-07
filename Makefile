@@ -4,7 +4,7 @@ CFLAGS=-O2 -Wall -Wextra -Wpedantic -std=c99 -fshort-enums
 all: bin/ltrep bin/compl bin/equiv bin/test
 
 bin/ltrep: ltrep.c bin/ltre.o | bin/
-	$(CC) $(CFLAGS) -Wno-parentheses -Wno-unused-parameter $^ -o $@
+	$(CC) $(CFLAGS) -Wno-parentheses -Wno-unused-value -Wno-unused-parameter $^ -o $@
 
 bin/compl: compl.c bin/ltre.o | bin/
 	$(CC) $(CFLAGS) -Wno-parentheses $^ -o $@

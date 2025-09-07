@@ -18,22 +18,22 @@
 2:cd
 31 0:ab
 3:cd
-32 <stdin>:1:ab
-<stdin>:2:cd
-33 <stdin>:0:ab
-<stdin>:3:cd
-34 <stdin>:1:0:ab
-<stdin>:2:3:cd
+32 -:1:ab
+-:2:cd
+33 -:0:ab
+-:3:cd
+34 -:1:0:ab
+-:2:3:cd
 35 3
 36 2
 37 3:3
 38 3
-39 <stdin>:3
-40 41 <stdin>
-42 <stdin>
-43 3:<stdin>
-44 <stdin>
-45 <stdin>:<stdin>
+39 -:3
+40 41 -
+42 -
+43 3:-
+44 -
+45 -:-
 46 47 3
 48 2
 49 diff test.exp test.act
@@ -44,22 +44,26 @@ diff
 52 1
 1
 53 test.sh
-<stdin>
+-
 54 1
 1
-55 test.sh:85:diff test.exp test.act
-<stdin>:1:diff	
-56 test.sh:5550:diff test.exp test.act
-<stdin>:0:diff	
+55 test.sh:90:diff test.exp test.act
+-:1:diff	
+56 test.sh:5855:diff test.exp test.act
+-:0:diff	
 57 b
 58 bbb
 59 aaaa
 60 1:a
-61 bar
-62 63 64 BAR
-65 66 BAR
-67 bar
-68 69 bar
-70 1:bar
+61 2
+62 2
+63 3
+64 2
+65 bar
+66 67 68 BAR
+69 70 BAR
 71 bar
-72 <stdin>:bar
+72 73 bar
+74 1:bar
+75 bar
+76 -:bar
