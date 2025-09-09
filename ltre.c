@@ -218,6 +218,22 @@ int regex_cmp(struct regex *regex1, struct regex *regex2) {
   abort(); // should have diverged
 }
 
+struct regex *regex_dump(struct regex *regex, int indent) {
+  char *types[] = {"ALT", "COMPL", "CONCAT", "REPEAT", "SYMSET"};
+  printf("%*s%s", indent, "", types[regex->type]);
+
+  if (regex->type == TYPE_REPEAT)
+    printf(" %d TO %d", regex->lower, regex->upper);
+  if (regex->type == TYPE_SYMSET)
+    printf(" %s", symset_fmt(regex->symset));
+
+  putchar('\n');
+  for (struct regex **child = regex->children; *child; child++)
+    regex_dump(*child, indent + 2);
+
+  return regex;
+}
+
 static size_t regex_fmt_len(struct regex *regex, enum regex_type prec) {
   // return the length of the string that would be produced by `regex_fmt`,
   // excluding the null terminator. this is a one-to-one mirror of `regex_fmt`,
@@ -341,22 +357,6 @@ static char *regex_fmt(struct regex *regex, char *buf, enum regex_type prec) {
     *buf++ = ')';
 
   return *buf = '\0', buf;
-}
-
-void regex_dump(struct regex *regex, int indent) {
-  // borrows its argument
-
-  char *types[] = {"ALT", "COMPL", "CONCAT", "REPEAT", "SYMSET"};
-  printf("%*s%s", indent, "", types[regex->type]);
-
-  if (regex->type == TYPE_REPEAT)
-    printf(" %d TO %d", regex->lower, regex->upper);
-  if (regex->type == TYPE_SYMSET)
-    printf(" %s", symset_fmt(regex->symset));
-
-  putchar('\n');
-  for (struct regex **child = regex->children; *child; child++)
-    regex_dump(*child, indent + 2);
 }
 
 static struct regex **regexes_insert(struct regex *regexes[],
@@ -905,7 +905,7 @@ int dfa_get_size(struct dstate *dfa) {
   return dfa_size;
 }
 
-void dfa_dump(struct dstate *dfa) {
+struct dstate *dfa_dump(struct dstate *dfa) {
   (void)dfa_get_size(dfa);
 
   printf("graph LR\n");
@@ -932,6 +932,8 @@ void dfa_dump(struct dstate *dfa) {
       printf("--> %d\n", ds2->id);
     }
   }
+
+  return dfa;
 }
 
 static void leb128_put(uint8_t **p, int n) {

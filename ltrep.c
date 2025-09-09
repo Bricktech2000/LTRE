@@ -35,6 +35,8 @@ struct args {
   char **files;  // [files...]
 };
 
+enum { EXIT_MATCH, EXIT_NOMATCH, EXIT_ERROR };
+
 #define VER "LTREP 0.2\n"
 #define DESC "LTREP --- print lines matching a pattern\n"
 #define HELP "Try 'ltrep -h' for more information.\n"
@@ -68,7 +70,7 @@ struct args parse_args(char **argv) {
   bool smartcase = false; // -S
 
   if (!*++argv)
-    fputs(DESC HELP, stdout), exit(EXIT_FAILURE);
+    fputs(DESC HELP, stderr), exit(EXIT_ERROR);
 
   for (; *argv && **argv == '-'; argv++) {
     if (strcmp(*argv, "--") == 0 && argv++)
@@ -84,14 +86,14 @@ struct args parse_args(char **argv) {
       else if ((p = strchr(opts, *opt)) && *opt != ' ')
         ((bool *)&args.opts)[p - opts >> 1] = !(p - opts & 1);
       else
-        printf(INV HELP, *opt == '-' ? -1 : 1, opt), exit(EXIT_FAILURE);
+        fprintf(stderr, INV HELP, *opt == '-' ? -1 : 1, opt), exit(EXIT_ERROR);
 
       smartcase &= *opt != 'i' && *opt != 's'; // '-i/-s' override '-S'
     }
   }
 
   if (!*argv)
-    fputs(USAGE HELP, stdout), exit(EXIT_FAILURE);
+    fputs(USAGE HELP, stderr), exit(EXIT_ERROR);
   args.pattern = *argv++;
   static char *read_stdin[] = {"-", NULL};
   args.files = *argv ? argv : read_stdin;
@@ -116,7 +118,7 @@ int main(int argc, char **argv) {
       args.opts.fixed ? ltre_fixed_string(loc) : ltre_parse(&loc, &error);
   if (error)
     fprintf(stderr, "parse error: %s near '%.16s'\n", error, loc),
-        exit(EXIT_FAILURE);
+        exit(EXIT_ERROR);
 
   // swapping checks for `args.exact` and `args.ignore` would not affect the
   // accepted language, but swapping checks for `args.exact` and `args.invert`
@@ -195,6 +197,8 @@ int main(int argc, char **argv) {
       printf("%s\n", *file);                                                   \
   } while (0)
 
+  int exit_status = EXIT_NOMATCH;
+
   for (char **file = args.files; *file; file++) {
     FILE *fp = NULL;
     if (strcmp(*file, "-") == 0)
@@ -206,13 +210,14 @@ int main(int argc, char **argv) {
     else if (1) {
       int fd = open(*file, O_RDONLY);
       if (fd == -1)
-        perror("open"), exit(EXIT_FAILURE);
+        goto perror_continue;
       off_t size = lseek(fd, 0, SEEK_END);
       if (size == -1)
-        perror("lseek"), exit(EXIT_FAILURE);
-      uint8_t *data = mmap(0, size, PROT_READ, MAP_PRIVATE, fd, 0);
+        goto perror_continue;
+      uint8_t *data =
+          size ? mmap(0, size, PROT_READ, MAP_PRIVATE, fd, 0) : &(uint8_t){0};
       if (data == MAP_FAILED)
-        perror("mmap"), exit(EXIT_FAILURE);
+        goto perror_continue;
 
       size_t lineno = 0, count = 0, lineoff = 0;
       uint8_t *line = data, *p = data;
@@ -225,16 +230,18 @@ int main(int argc, char **argv) {
           (p = memchr(p, '\n', data + size - p)) || (p = data + size);
         size_t len = p - line;
 
-        if (lineno++, dstate->accepting && ++count)
+        if (lineno++, dstate->accepting && ++count) {
+          if (exit_status != EXIT_ERROR)
+            exit_status = EXIT_MATCH;
           OUTPUT_LINE;
+        }
         lineoff += len + 1;
       }
 
-      if (munmap(data, size) == -1)
-        perror("munmap"), exit(EXIT_FAILURE);
-
+      if (size != 0 && munmap(data, size) == -1)
+        goto perror_continue;
       if (close(fd) == -1)
-        perror("close"), exit(EXIT_FAILURE);
+        goto perror_continue;
 
       OUTPUT_FILE;
 
@@ -243,7 +250,7 @@ int main(int argc, char **argv) {
 #endif
 
     else if ((fp = fopen(*file, "r")) == NULL)
-      perror("fopen"), exit(EXIT_FAILURE);
+      goto perror_continue;
 
     size_t lineno = 0, count = 0, lineoff = 0;
     size_t len = 0, cap = 256;
@@ -256,26 +263,36 @@ int main(int argc, char **argv) {
         dstate = dstate->transitions[c];
       }
       if (ferror(fp))
-        perror("fgetc"), exit(EXIT_FAILURE);
+        goto perror_continue;
       if (feof(fp) && len == 0)
         break; // ignore partial line if it's empty
 
-      if (lineno++, dstate->accepting && ++count)
+      if (lineno++, dstate->accepting && ++count) {
+        if (exit_status != EXIT_ERROR)
+          exit_status = EXIT_MATCH;
         OUTPUT_LINE;
+      }
       lineoff += len + 1;
     }
 
     free(line);
 
+    if (fp == stdin)
+      clearerr(fp); // clear EOF in case file '-' is supplied more than once
+    else if (fclose(fp) != 0)
+      goto perror_continue;
+
     OUTPUT_FILE;
 
-    // clear EOF indicator in case a file of '-' is supplied more than once
-    clearerr(fp);
+    continue;
 
-    if (fp != stdin && fclose(fp) != 0)
-      perror("fclose"), exit(EXIT_FAILURE);
+  perror_continue:
+    exit_status = EXIT_ERROR;
+    perror(*file);
   }
 
   dfa_free(dfa);
   dfa_free(rev_dfa), dfa_free(fwd_dfa);
+
+  return exit_status;
 }
