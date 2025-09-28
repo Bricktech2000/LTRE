@@ -92,7 +92,8 @@ struct regex {
   // this field is initialized in the smart constructors
   bool nullable;
   // `struct regex` is a persistent data structure with structural sharing, so
-  // we want a reference count
+  // we want a reference count and a "visited" flag for traversal
+  bool visited;
   unsigned refcount;
   // a measure of the size of the regular expression if structural sharing were
   // expanded out, defined as `size(regex) = 1 + sum(size(regex->children))`.
@@ -218,16 +219,32 @@ int regex_cmp(struct regex *regex1, struct regex *regex2) {
   abort(); // should have diverged
 }
 
+void regex_unmark(struct regex *regex) {
+  regex->visited = false;
+  for (struct regex **child = regex->children; *child; child++)
+    regex_unmark(*child);
+}
+
 struct regex *regex_dump(struct regex *regex, int indent) {
+  // `struct regex`es that have previously been dumped by this function, even
+  // from a different call, will be collapsed to show structural sharing. to
+  // start afresh, call `rexex_unmark(regex)` before calling this function
+
+  if (regex->visited++) { // hehe
+    printf("%*sref %p\n", indent, "", (void *)regex);
+    return regex;
+  }
+
   char *types[] = {"ALT", "COMPL", "CONCAT", "REPEAT", "SYMSET"};
   printf("%*s%s", indent, "", types[regex->type]);
 
   if (regex->type == TYPE_REPEAT)
-    printf(" %d TO %d", regex->lower, regex->upper);
+    printf(" %d,%d", regex->lower, regex->upper); // using '%d' for `UINT_MAX`
   if (regex->type == TYPE_SYMSET)
     printf(" %s", symset_fmt(regex->symset));
 
-  putchar('\n');
+  printf(" at %p\n", (void *)regex);
+
   for (struct regex **child = regex->children; *child; child++)
     regex_dump(*child, indent + 2);
 
@@ -855,7 +872,9 @@ static struct regex *regex_differentiate_ref(struct regex *regex, uint8_t chr) {
     abort();
 
   // printf("wrt 0x%02hhx\n", chr);
+  // regex_unmark(regex);
   // regex_dump(regex, 0);
+  // regex_unmark(regex->delta);
   // regex_dump(regex->delta, 0);
 
   return regex_incref(regex->delta);
@@ -1566,6 +1585,7 @@ struct regex *ltre_parse(char **pattern, char **error) {
     return regex_decref(regex), NULL;
   }
 
+  // regex_unmark(regex);
   // regex_dump(regex, 0);
   return regex;
 }
@@ -1657,6 +1677,8 @@ struct dstate *ltre_determinize(struct regex *regex) {
   // for (struct dstate *dstate = dfa; dstate; dstate = dstate->next) {
   //   char *pattern = ltre_stringify(regex_incref(dstate->regex));
   //   puts(pattern), free(pattern);
+  //   // regex_unmark(dstate->regex);
+  //   // regex_dump(dstate->regex, 0);
   // }
 
   for (struct dstate *dstate = dfa; dstate; dstate = dstate->next)

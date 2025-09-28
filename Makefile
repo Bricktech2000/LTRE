@@ -19,7 +19,7 @@ bin/test: test.c bin/ltre.o | bin/
 	$(CC) $(CFLAGS) -Wno-parentheses -Wno-missing-field-initializers $^ -o $@
 
 bin/ltre.o: ltre.c ltre.h | bin/
-	$(CC) $(CFLAGS) -Wno-parentheses -Wno-sign-compare -Wno-missing-field-initializers -Wno-implicit-fallthrough -c $< -o $@
+	$(CC) $(CFLAGS) -Wno-parentheses -Wno-sign-compare -Wno-missing-field-initializers -Wno-implicit-fallthrough -Wno-bool-operation -c $< -o $@
 
 bin/:
 	mkdir bin/
