@@ -1181,10 +1181,10 @@ bool dfa_equivalent(struct dstate *dfa1, struct dstate *dfa2) {
 }
 
 // some invariants for parsers on parse error:
-// - `error` shall be set to a non-`NULL` error message
-// - `regex` shall point to the error location
-// - the returned regular expression should be `NULL`
-// - the caller is responsible for backtracking
+//   - `error` shall be set to a non-`NULL` error message
+//   - `regex` shall point to the error location
+//   - the returned regular expression should be `NULL`
+//   - the caller is responsible for backtracking
 
 static int parse_ws(char **pattern) {
   while (**pattern && isspace(**pattern))

@@ -124,18 +124,18 @@ int main(int argc, char **argv) {
   // accepted language, but swapping checks for `args.exact` and `args.invert`
   // or swapping checks for `args.ignore` and `args.invert` would. we check
   // for `args.invert` last to preserve that:
-  // - `ltrep -x -vp` means _does not contain_
-  // - `ltrep -x -vi` means _is not a case variation of_
-  // - `ltrep -x -vpi` means _does not contain any case variation of_
+  //   - `ltrep -x -vp` means 'does not contain'
+  //   - `ltrep -x -vi` means 'is not a case variation of'
+  //   - `ltrep -x -vpi` means 'does not contain any case variation of'
   //
   // given a regex /abc/, for match boundary extraction (when '-o' is supplied
   // and matching is partial and not inverted), we construct:
-  // 1. the regular partial DFA `dfa` that matches /<>*abc<>*/, which we run
-  //    in the usual way to filter out lines that don't contain matches;
-  // 2. a "reverse DFA" `rev_dfa` that matches /<>*cba/, which we run from the
-  //    end of a line to find the spots where a partial match can begin;
-  // 3. a "forward DFA" `fwd_dfa` that matches /abc/, which we run from the
-  //    beginning of a partial match to find the spots where it can end.
+  //  1. the regular partial DFA `dfa` that matches /<>*abc<>*/, which we run
+  //     in the usual way to filter out lines that don't contain matches;
+  //  2. a "reverse DFA" `rev_dfa` that matches /<>*cba/, which we run from the
+  //     end of a line to find the spots where a partial match can begin;
+  //  3. a "forward DFA" `fwd_dfa` that matches /abc/, which we run from the
+  //     beginning of a partial match to find the spots where it can end.
   // by interpreting those "can"s in the right way, we guarantee leftmost-
   // longest semantics for match boundary extraction
 
