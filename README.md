@@ -34,7 +34,7 @@ To build and run the command-line search tool:
 make bin/ltrep
 sh test.sh # should have no output
 bin/ltrep -h # displays usage
-bin/ltrep -o '"(~[\\"]|\\.)*"' ltrep.c ltre.c
+bin/ltrep -po '"(~[\\"]|\\.)*"' ltrep.c ltre.c
 ```
 
 To build and run the regex complementation tool:

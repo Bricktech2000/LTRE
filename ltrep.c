@@ -17,17 +17,17 @@ struct dstate {
 };
 
 // '-S' is dealt with separately in `parse_args`
-char *opts = "v xpisF HhnNb o c l ";
+char *opts = "v pxisF o HhnNb c l ";
 struct args {
   struct {
     bool invert;  // -v
-    bool exact;   // -x/-p
+    bool partial; // -p/-x
     bool ignore;  // -i/-s
     bool fixed;   // -F
+    bool onlymat; // -o
     bool filehd;  // -H/-h
     bool lineno;  // -n/-N
     bool byteoff; // -b
-    bool onlymat; // -o
     bool count;   // -c
     bool list;    // -l
   } opts;
@@ -37,7 +37,7 @@ struct args {
 
 enum { EXIT_MATCH, EXIT_NOMATCH, EXIT_ERROR };
 
-#define VER "LTREP 0.2\n"
+#define VER "LTREP 0.3\n"
 #define DESC "LTREP --- print lines matching a pattern\n"
 #define HELP "Try 'ltrep -h' for more information.\n"
 #define USAGE                                                                  \
@@ -46,17 +46,17 @@ enum { EXIT_MATCH, EXIT_NOMATCH, EXIT_ERROR };
   "  ltrep [options...] -h,-V\n"
 #define OPTS                                                                   \
   "Options:\n"                                                                 \
-  "  -v     invert match; print non-matching lines\n"                          \
-  "  -x/-p  exact match; match against entire line\n"                          \
+  "  -v     invert match; print non-matching lines instead\n"                  \
+  "  -p/-x  partial match; print lines that contain a match\n"                 \
   "  -i/-s  ignore case; match case-insensitively\n"                           \
-  "  -S     smart case; set '-i' if pattern lowercase\n"                       \
-  "  -F     interpret the pattern as a fixed string\n"                         \
-  "  -H/-h  prefix matching lines with file names\n"                           \
-  "  -n/-N  prefix matching lines with line numbers\n"                         \
-  "  -b     prefix matching lines with byte offsets\n"                         \
-  "  -o     print the matching part of a line only\n"                          \
+  "  -S     smart case; set '-i' if the pattern is lowercase\n"                \
+  "  -F     parse the pattern as a fixed string, not a regex\n"                \
+  "  -o     with '-p', print the matched part of a line only\n"                \
+  "  -H/-h  prefix matches with their file name\n"                             \
+  "  -n/-N  prefix matches with their 1-based line number\n"                   \
+  "  -b     prefix matches with their 0-based byte offset\n"                   \
   "  -c     only print a count of matching lines\n"                            \
-  "  -l     only print a list of files with matches\n"
+  "  -l     only print a list of files containing matches\n"
 #define EXTRA                                                                  \
   "Options '-i/-s' and '-S' override eachother.\n"                             \
   "A '--' is needed when <pattern> begins in '-'.\n"                           \
@@ -99,9 +99,9 @@ struct args parse_args(char **argv) {
   args.files = *argv ? argv : read_stdin;
 
   if (smartcase) {
-    // not trying to be clever here. /\D/ and /\x6A/, for instance, are treated
-    // as uppercase and cause matches to become case-sensitive. probably not
-    // much of an issue because one could write /^\d/ and /\x6a/ instead
+    // not trying to be clever here. /\D/ and /\x6A/, for example, are treated
+    // as uppercase and cause matches to become case sensitive. probably not
+    // much of an issue because one could write /~\d/ and /\x6a/ instead
     args.opts.ignore = true; // '-S' overrides '-i/-s'
     for (char *c = args.pattern; *c; c++)
       args.opts.ignore &= !isupper(*c);
@@ -120,13 +120,13 @@ int main(int argc, char **argv) {
     fprintf(stderr, "parse error: %s near '%.16s'\n", error, loc),
         exit(EXIT_ERROR);
 
-  // swapping checks for `args.exact` and `args.ignore` would not affect the
-  // accepted language, but swapping checks for `args.exact` and `args.invert`
+  // swapping checks for `args.partial` and `args.ignore` would not affect the
+  // accepted language, but swapping checks for `args.partial` and `args.invert`
   // or swapping checks for `args.ignore` and `args.invert` would. we check
   // for `args.invert` last to preserve that:
-  //   - `ltrep -x -vp` means 'does not contain'
-  //   - `ltrep -x -vi` means 'is not a case variation of'
-  //   - `ltrep -x -vpi` means 'does not contain any case variation of'
+  //   - `ltrep -vp` means 'does not contain'
+  //   - `ltrep -vi` means 'is not a case variation of'
+  //   - `ltrep -vpi` means 'does not contain any case variation of'
   //
   // given a regex /abc/, for match boundary extraction (when '-o' is supplied
   // and matching is partial and not inverted), we construct:
@@ -143,13 +143,13 @@ int main(int argc, char **argv) {
 
   if (args.opts.ignore)
     regex = regex_ignorecase(regex, false);
-  if (args.opts.onlymat && !args.opts.exact && !args.opts.invert &&
+  if (args.opts.onlymat && args.opts.partial && !args.opts.invert &&
       !args.opts.count && !args.opts.list) {
     fwd_dfa = ltre_compile(regex_incref(regex));
     rev_dfa = ltre_compile(regex_reverse(
         regex_concat(REGEXES(regex_incref(regex), regex_univ()))));
   }
-  if (!args.opts.exact)
+  if (args.opts.partial)
     regex = regex_concat(REGEXES(regex_univ(), regex, regex_univ()));
   if (args.opts.invert)
     regex = regex_compl(regex);
@@ -161,7 +161,7 @@ int main(int argc, char **argv) {
     if (args.opts.count || args.opts.list)                                     \
       break;                                                                   \
     uint8_t *p, *begin = line, *end = line + len;                              \
-    if (args.opts.onlymat && !args.opts.exact && !args.opts.invert) {          \
+    if (args.opts.onlymat && args.opts.partial && !args.opts.invert) {         \
       p = end; /* leftmost */                                                  \
       for (struct dstate *dstate = rev_dfa;                                    \
            dstate->accepting ? begin = p : 0, p > line;)                       \
@@ -262,7 +262,7 @@ int main(int argc, char **argv) {
         len == cap ? line = realloc(line, cap *= 2) : 0;
         dstate = dstate->transitions[c];
       }
-      if (ferror(fp))
+      if (ferror(fp) && (free(line), 1))
         goto perror_continue;
       if (feof(fp) && len == 0)
         break; // ignore partial line if it's empty

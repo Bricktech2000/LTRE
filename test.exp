@@ -1,69 +1,66 @@
-00 01 bar
-02 03 bar
-04 05 bar
-06 BAZ
-07 foo
-08 09 foo
-10 11 12 13 foo
-14 bar
-15 BAZ
-16 17 18 19 20 bar
-21 BAZ
-22 23 24 BAZ
+00 01 aa
+02 Aa
+03 AA
+04 bb
+05 aa
+06 07 AA
+08 bb
+09 10 11 12 bb
+13 14 15 16 17 18 Aa
+19 20 21 aa
+22 Aa
+23 AA
+24 -W
 25 -W
-26 -W
-27 28 a+
-29 A+
-30 1:ab
+26 27 a+
+28 A+
+29 a++
+30 31 1:ab
 2:cd
-31 0:ab
+32 0:ab
 3:cd
-32 -:1:ab
+33 1:0:ab
+2:3:cd
+34 -:1:ab
 -:2:cd
-33 -:0:ab
+35 -:0:ab
 -:3:cd
-34 -:1:0:ab
+36 -:1:0:ab
 -:2:3:cd
-35 3
-36 2
-37 3:3
-38 3
-39 -:3
-40 41 -
-42 -
-43 3:-
+37 3
+38 2
+39 3:3
+40 3
+41 -:3
+42 43 -
 44 -
-45 -:-
-46 47 3
-48 2
-49 diff test.exp test.act
-50 diff	
-diff test.exp test.act
-51 diff test.exp test.act
-diff	
-52 1
-1
-53 test.sh
--
-54 1
-1
-55 test.sh:90:diff test.exp test.act
--:1:diff	
-56 test.sh:5855:diff test.exp test.act
--:0:diff	
-57 b
-58 bbb
-59 aaaa
-60 1:a
-61 2
-62 2
-63 3
-64 2
-65 bar
-66 67 68 BAR
-69 70 BAR
-71 bar
-72 73 bar
-74 1:bar
-75 bar
-76 -:bar
+45 3:-
+46 -
+47 -:-
+48 49 3
+50 2
+51 diff	
+52 diff	
+53 54 diff	
+55 diff	
+56 1
+57 -
+58 1
+59 -:1:diff	
+60 -:0:diff	
+61 b
+62 bbb
+63 aaaa
+64 1:a
+65 2
+66 2
+67 3
+68 2
+69 70 a
+71 72 A
+73 74 A
+75 a
+76 77 a
+78 1:a
+79 a
+80 -:a
