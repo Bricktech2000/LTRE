@@ -6,6 +6,7 @@
 struct dstate {
   struct dstate *transitions[256];
   bool accepting, terminating;
+  unsigned char _[];
 };
 
 bool run(struct dstate *dfa) {
@@ -32,7 +33,7 @@ bool run(struct dstate *dfa) {
     if ((chr = getchar()) == EOF)
       break;
     // if (dfa->transitions[chr]->terminating)
-    //   goto disambiguate;
+    //   goto ambiguous;
   }
 
   return dfa->accepting;

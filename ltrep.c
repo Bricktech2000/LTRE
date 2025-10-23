@@ -14,22 +14,29 @@
 struct dstate {
   struct dstate *transitions[256];
   bool accepting, terminating;
+  unsigned char _[];
 };
 
-// '-S' is dealt with separately in `parse_args`
-char *opts = "v pxisF o HhnNb c l ";
+char *opts = "v pxo isS FEHhnNkKb Ttc l L 0 zZq ";
 struct args {
   struct {
     bool invert;  // -v
     bool partial; // -p/-x
-    bool ignore;  // -i/-s
-    bool fixed;   // -F
     bool onlymat; // -o
+    bool ignore;  // -i/-s
+    bool smart;   // -S
+    bool fixed;   // -F
     bool filehd;  // -H/-h
     bool lineno;  // -n/-N
+    bool colno;   // -k/-K
     bool byteoff; // -b
+    bool inittab; // -T/-t
     bool count;   // -c
     bool list;    // -l
+    bool nlist;   // -L
+    bool nulname; // -0
+    bool nuldata; // -z/-Z
+    bool quiet;   // -q
   } opts;
   char *pattern; // <pattern>
   char **files;  // [files...]
@@ -46,28 +53,37 @@ enum { EXIT_MATCH, EXIT_NOMATCH, EXIT_ERROR };
   "  ltrep [options...] -h,-V\n"
 #define OPTS                                                                   \
   "Options:\n"                                                                 \
-  "  -v     invert match; print non-matching lines instead\n"                  \
+  "  -v     invert match; print non-matching lines\n"                          \
   "  -p/-x  partial match; print lines that contain a match\n"                 \
+  "  -o     match only; print the first match in each line\n"                  \
   "  -i/-s  ignore case; match case-insensitively\n"                           \
-  "  -S     smart case; set '-i' if the pattern is lowercase\n"                \
-  "  -F     parse the pattern as a fixed string, not a regex\n"                \
-  "  -o     with '-p', print the matched part of a line only\n"                \
+  "  -S     smart case; set '-i' if pattern is all-lowercase\n"                \
+  "  -F/-E  parse the pattern as a fixed string, not a regex\n"                \
   "  -H/-h  prefix matches with their file name\n"                             \
   "  -n/-N  prefix matches with their 1-based line number\n"                   \
+  "  -k/-K  prefix matches with their 1-based column number\n"                 \
   "  -b     prefix matches with their 0-based byte offset\n"                   \
-  "  -c     only print a count of matching lines\n"                            \
-  "  -l     only print a list of files containing matches\n"
+  "  -T/-t  prefix matches with a \\t character\n"                             \
+  "  -c     only print a count of matching lines per file\n"                   \
+  "  -l     only print a list of files containing matches\n"                   \
+  "  -L     only print a list of files containing no matches\n"                \
+  "  -0     terminate all file names with \\0, not : or \\n\n"                 \
+  "  -z/-Z  use \\0 line terminator for input and output data\n"               \
+  "  -q     produce no output and prioritize exit status 0\n"
 #define EXTRA                                                                  \
   "Options '-i/-s' and '-S' override eachother.\n"                             \
+  "Options '-p/-x' and '-o' override eachother.\n"                             \
   "A '--' is needed when <pattern> begins in '-'.\n"                           \
   "A file of '-' denotes standard input. If no\n"                              \
   "files are provided, read from standard input.\n"                            \
+  "Exit status is 2 if errors occurred, else 0 if\n"                           \
+  "a line matched, else 1; with '-q' it is 0 if a\n"                           \
+  "line matched, else 2 if errors occurred, else 1.\n"                         \
   "Show help and version info with '-h' and '-V'.\n"
-#define INV "Unrecognized option '-%.*s'\n"
+#define INV "Unrecognized option '-%.*s'.\n"
 
 struct args parse_args(char **argv) {
   struct args args = {0};
-  bool smartcase = false; // -S
 
   if (!*++argv)
     fputs(DESC HELP, stderr), exit(EXIT_ERROR);
@@ -81,14 +97,13 @@ struct args parse_args(char **argv) {
       fputs(VER, stdout), exit(EXIT_SUCCESS);
 
     for (char *p, *opt = *argv + 1; *opt; opt++) {
-      if (*opt == 'S')
-        smartcase = true;
-      else if ((p = strchr(opts, *opt)) && *opt != ' ')
+      if ((p = strchr(opts, *opt)) && *opt != ' ')
         ((bool *)&args.opts)[p - opts >> 1] = !(p - opts & 1);
       else
         fprintf(stderr, INV HELP, *opt == '-' ? -1 : 1, opt), exit(EXIT_ERROR);
 
-      smartcase &= *opt != 'i' && *opt != 's'; // '-i/-s' override '-S'
+      args.opts.smart &= *opt != 'i' && *opt != 's';   // '-i/-s' override '-S'
+      args.opts.onlymat &= *opt != 'p' && *opt != 'x'; // '-p/-x' override '-o'
     }
   }
 
@@ -98,14 +113,15 @@ struct args parse_args(char **argv) {
   static char *read_stdin[] = {"-", NULL};
   args.files = *argv ? argv : read_stdin;
 
-  if (smartcase) {
-    // not trying to be clever here. /\D/ and /\x6A/, for example, are treated
-    // as uppercase and cause matches to become case sensitive. probably not
-    // much of an issue because one could write /~\d/ and /\x6a/ instead
-    args.opts.ignore = true; // '-S' overrides '-i/-s'
+  args.opts.partial |= args.opts.onlymat; // '-o' overrides '-p/-x'
+  args.opts.ignore |= args.opts.smart;    // '-S' overrides '-i/-s'
+
+  // not trying to be clever here. /\D/ and /\x6A/, for example, are treated as
+  // uppercase and cause matches to become case sensitive. probably not much of
+  // an issue because one could write /~\d/ and /\x6a/ instead
+  if (args.opts.smart)
     for (char *c = args.pattern; *c; c++)
       args.opts.ignore &= !isupper(*c);
-  }
 
   return args;
 }
@@ -129,10 +145,10 @@ int main(int argc, char **argv) {
   //   - `ltrep -vpi` means 'does not contain any case variation of'
   //
   // given a regex /abc/, for match boundary extraction (when '-o' is supplied
-  // and matching is partial and not inverted), we construct:
-  //  1. the regular partial DFA `dfa` that matches /<>*abc<>*/, which we run
-  //     in the usual way to filter out lines that don't contain matches;
-  //  2. a "reverse DFA" `rev_dfa` that matches /<>*cba/, which we run from the
+  // and matching is not inverted), we construct:
+  //  1. the regular partial DFA `dfa` that matches /%abc%/, which we run in
+  //     the usual way to filter out lines that don't contain matches;
+  //  2. a "reverse DFA" `rev_dfa` that matches /%cba/, which we run from the
   //     end of a line to find the spots where a partial match can begin;
   //  3. a "forward DFA" `fwd_dfa` that matches /abc/, which we run from the
   //     beginning of a partial match to find the spots where it can end.
@@ -143,8 +159,8 @@ int main(int argc, char **argv) {
 
   if (args.opts.ignore)
     regex = regex_ignorecase(regex, false);
-  if (args.opts.onlymat && args.opts.partial && !args.opts.invert &&
-      !args.opts.count && !args.opts.list) {
+  if (args.opts.onlymat && !args.opts.invert && !args.opts.count &&
+      !args.opts.list && !args.opts.nlist) {
     fwd_dfa = ltre_compile(regex_incref(regex));
     rev_dfa = ltre_compile(regex_reverse(
         regex_concat(REGEXES(regex_incref(regex), regex_univ()))));
@@ -158,10 +174,12 @@ int main(int argc, char **argv) {
 
 #define OUTPUT_LINE /* args.opts, file, lineno, lineoff, dfa, line, len */     \
   do {                                                                         \
-    if (args.opts.count || args.opts.list)                                     \
+    if (args.opts.count || args.opts.list || args.opts.nlist)                  \
+      break;                                                                   \
+    if (args.opts.quiet)                                                       \
       break;                                                                   \
     uint8_t *p, *begin = line, *end = line + len;                              \
-    if (args.opts.onlymat && args.opts.partial && !args.opts.invert) {         \
+    if (args.opts.onlymat && !args.opts.invert) {                              \
       p = end; /* leftmost */                                                  \
       for (struct dstate *dstate = rev_dfa;                                    \
            dstate->accepting ? begin = p : 0, p > line;)                       \
@@ -172,34 +190,46 @@ int main(int argc, char **argv) {
         dstate = dstate->transitions[*p++];                                    \
     }                                                                          \
     if (args.opts.filehd)                                                      \
-      printf("%s:", *file);                                                    \
+      printf("%s%c", *file, args.opts.nulname ? '\0' : ':');                   \
     if (args.opts.lineno)                                                      \
-      printf("%zu:", lineno);                                                  \
+      printf("%zu:", lineno + 1);                                              \
+    if (args.opts.colno)                                                       \
+      printf("%zu:", begin - line + 1);                                        \
     if (args.opts.byteoff)                                                     \
       printf("%zu:", begin - line + lineoff);                                  \
+    if (args.opts.inittab)                                                     \
+      putchar('\t');                                                           \
     fwrite(begin, sizeof(*begin), end - begin, stdout);                        \
-    fputc('\n', stdout);                                                       \
+    putchar(args.opts.nuldata ? '\0' : '\n');                                  \
   } while (0)
 
-#define OUTPUT_FILE /* args.opts, file, lineno, count */                       \
+#define OUTPUT_FILE /* args.opts, file, lineno, lineoff, count */              \
   do {                                                                         \
-    if (!args.opts.count && !args.opts.list)                                   \
+    if (!args.opts.count && (count ? !args.opts.list : !args.opts.nlist))      \
       break;                                                                   \
-    if (count == 0)                                                            \
+    if (args.opts.quiet)                                                       \
       break;                                                                   \
     if (args.opts.filehd)                                                      \
-      printf("%s:", *file);                                                    \
+      printf("%s%c", *file, args.opts.nulname ? '\0' : ':');                   \
     if (args.opts.lineno)                                                      \
-      printf("%zu:", lineno);                                                  \
-    if (args.opts.count)                                                       \
+      printf("%zu:", lineno + 1);                                              \
+    if (args.opts.colno)                                                       \
+      printf("%zu:", line - line + 1);                                         \
+    if (args.opts.byteoff)                                                     \
+      printf("%zu:", line - line + lineoff);                                   \
+    if (args.opts.list || args.opts.nlist)                                     \
+      printf("%s%c", *file, args.opts.nulname ? '\0' : '\n');                  \
+    else if (args.opts.count)                                                  \
       printf("%zu\n", count);                                                  \
-    else if (args.opts.list)                                                   \
-      printf("%s\n", *file);                                                   \
   } while (0)
 
   int exit_status = EXIT_NOMATCH;
+  char ieol = args.opts.nuldata ? '\0' : '\n';
 
   for (char **file = args.files; *file; file++) {
+    if (args.opts.quiet && exit_status == EXIT_MATCH)
+      break; // no need to process more files
+
     FILE *fp = NULL;
     if (strcmp(*file, "-") == 0)
       fp = stdin;
@@ -224,18 +254,20 @@ int main(int argc, char **argv) {
 
       for (; p < data + size; line = ++p) {
         struct dstate *dstate = dfa;
-        while (!dstate->terminating && p < data + size && *p != '\n')
+        while (!dstate->terminating && p < data + size && *p != ieol)
           dstate = dstate->transitions[*p++];
-        if (p < data + size && *p != '\n')
-          (p = memchr(p, '\n', data + size - p)) || (p = data + size);
+        if (p < data + size && *p != ieol)
+          (p = memchr(p, ieol, data + size - p)) || (p = data + size);
         size_t len = p - line;
 
-        if (lineno++, dstate->accepting && ++count) {
-          if (exit_status != EXIT_ERROR)
-            exit_status = EXIT_MATCH;
+        if (dstate->accepting && ++count) {
           OUTPUT_LINE;
+          if (args.opts.quiet || exit_status != EXIT_ERROR)
+            exit_status = EXIT_MATCH; // without '-q', EXIT_ERROR takes priority
+          if (args.opts.list || args.opts.quiet)
+            break; // no need to process more lines
         }
-        lineoff += len + 1;
+        lineno++, lineoff += len + 1;
       }
 
       if (size != 0 && munmap(data, size) == -1)
@@ -258,7 +290,7 @@ int main(int argc, char **argv) {
 
     for (; !feof(fp); len = 0) {
       struct dstate *dstate = dfa;
-      for (int c; c = fgetc(fp), c != EOF && c != '\n'; line[len++] = c) {
+      for (int c; c = fgetc(fp), c != EOF && c != ieol; line[len++] = c) {
         len == cap ? line = realloc(line, cap *= 2) : 0;
         dstate = dstate->transitions[c];
       }
@@ -267,12 +299,14 @@ int main(int argc, char **argv) {
       if (feof(fp) && len == 0)
         break; // ignore partial line if it's empty
 
-      if (lineno++, dstate->accepting && ++count) {
-        if (exit_status != EXIT_ERROR)
-          exit_status = EXIT_MATCH;
+      if (dstate->accepting && ++count) {
         OUTPUT_LINE;
+        if (args.opts.quiet || exit_status != EXIT_ERROR)
+          exit_status = EXIT_MATCH; // without '-q', EXIT_ERROR takes priority
+        if (args.opts.list || args.opts.quiet)
+          break; // no need to process more lines
       }
-      lineoff += len + 1;
+      lineno++, lineoff += len + 1;
     }
 
     free(line);
@@ -287,8 +321,9 @@ int main(int argc, char **argv) {
     continue;
 
   perror_continue:
-    exit_status = EXIT_ERROR;
     perror(*file);
+    if (!args.opts.quiet || exit_status != EXIT_MATCH)
+      exit_status = EXIT_ERROR; // with '-q', EXIT_MATCH takes priority
   }
 
   dfa_free(dfa);
