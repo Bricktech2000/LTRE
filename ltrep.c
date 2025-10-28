@@ -10,11 +10,10 @@
 #include <unistd.h>
 #endif
 
-// steal implementation details
+// steal implementation details. this probably has undefined behavior
 struct dstate {
   struct dstate *transitions[256];
   bool accepting, terminating;
-  unsigned char _[];
 };
 
 char *opts = "v pxo isS FEHhnNkKb Ttc l L 0 zZq ";
@@ -44,6 +43,24 @@ struct args {
 
 enum { EXIT_MATCH, EXIT_NOMATCH, EXIT_ERROR };
 
+// the fundamental problem with a --multiline mode is quoting: in the output
+// stream, how do you communicate that one match ends and the next one begins?
+// let's take a closer look at line terminators (as in, \n when -Z and \0 when
+// -z). with -x, line terminators terminate lines, each line is a word (a
+// formal-language-theory word), and we output matching words. -p is the same
+// but the pattern is first surrounded by a pair of wildcards. but for -o, there
+// are two equivalent perspectives:
+//  1. the input stream is a sequence of lines, line terminators terminate each
+//     such line, each line is a string, and we output the substrings that are
+//     matching words.
+//  2. the input stream is a homogeneous blob of data, line terminators are
+//     sentinel bytes, and the user asks that any match containig such sentinels
+//     be ignored so we can use them to delineate matches in the output stream.
+// perspective 2 with line terminator \0 is our multiline mode. matches that
+// contain \0 bytes are ignored, but it must be so because \0 bytes are what's
+// used in the output to delineate matches. for reporting matches that contain
+// both \n and \0 bytes, you might use tr(1).
+
 #define VER "LTREP 0.3\n"
 #define DESC "LTREP --- print lines matching a pattern\n"
 #define HELP "Try 'ltrep -h' for more information.\n"
@@ -55,7 +72,7 @@ enum { EXIT_MATCH, EXIT_NOMATCH, EXIT_ERROR };
   "Options:\n"                                                                 \
   "  -v     invert match; print non-matching lines\n"                          \
   "  -p/-x  partial match; print lines that contain a match\n"                 \
-  "  -o     match only; print the first match in each line\n"                  \
+  "  -o     match only; print the matches, not the lines\n"                    \
   "  -i/-s  ignore case; match case-insensitively\n"                           \
   "  -S     smart case; set '-i' if pattern is all-lowercase\n"                \
   "  -F/-E  parse the pattern as a fixed string, not a regex\n"                \
@@ -68,7 +85,7 @@ enum { EXIT_MATCH, EXIT_NOMATCH, EXIT_ERROR };
   "  -l     only print a list of files containing matches\n"                   \
   "  -L     only print a list of files containing no matches\n"                \
   "  -0     terminate all file names with \\0, not : or \\n\n"                 \
-  "  -z/-Z  use \\0 line terminator for input and output data\n"               \
+  "  -z/-Z  use line terminator \\0 for input and output data\n"               \
   "  -q     produce no output and prioritize exit status 0\n"
 #define EXTRA                                                                  \
   "Options '-i/-s' and '-S' override eachother.\n"                             \
@@ -152,8 +169,14 @@ int main(int argc, char **argv) {
   //     end of a line to find the spots where a partial match can begin;
   //  3. a "forward DFA" `fwd_dfa` that matches /abc/, which we run from the
   //     beginning of a partial match to find the spots where it can end.
-  // by interpreting those "can"s in the right way, we guarantee leftmost-
-  // longest semantics for match boundary extraction
+  // so we perform one forward scan, then one backward scan within which we
+  // perform several forward scans. the alternative would be to construct:
+  //  1. a DFA that matches /%abc/, which we run forward from the start of a
+  //     line to find the spots where a partial match can end; and
+  //  2. a DFA that matches /cba/, which we run backward from the end of a
+  //     partial match to find the spots where it can begin.
+  // but that means performing one forward scan within which we perform several
+  // backward scans, and that's not as nice to the prefetcher
 
   struct dstate *rev_dfa = NULL, *fwd_dfa = NULL;
 
@@ -172,23 +195,20 @@ int main(int argc, char **argv) {
 
   struct dstate *dfa = ltre_compile(regex);
 
-#define OUTPUT_LINE /* args.opts, file, lineno, lineoff, dfa, line, len */     \
+  // be extremely careful with -o: in general, the space and time complexity
+  // becomes quadratic in the input length. to preserve linear-time, linear-
+  // space guarantees it is sufficient (and necessary, when other options don't
+  // suppress any output) to show, for a given pattern, that there is a K such
+  // that every input character is contained in at most K distinct matches. for
+  // patterns with bounded match length this is always the case.
+
+#define OUTPUT_MATCH /* args.opts, file, lineno, lineoff, line, begin, end */  \
   do {                                                                         \
     if (args.opts.count || args.opts.list || args.opts.nlist)                  \
       break;                                                                   \
     if (args.opts.quiet)                                                       \
       break;                                                                   \
-    uint8_t *p, *begin = line, *end = line + len;                              \
-    if (args.opts.onlymat && !args.opts.invert) {                              \
-      p = end; /* leftmost */                                                  \
-      for (struct dstate *dstate = rev_dfa;                                    \
-           dstate->accepting ? begin = p : 0, p > line;)                       \
-        dstate = dstate->transitions[*--p];                                    \
-      p = begin; /* longest */                                                 \
-      for (struct dstate *dstate = fwd_dfa;                                    \
-           dstate->accepting ? end = p : 0, p < line + len;)                   \
-        dstate = dstate->transitions[*p++];                                    \
-    }                                                                          \
+                                                                               \
     if (args.opts.filehd)                                                      \
       printf("%s%c", *file, args.opts.nulname ? '\0' : ':');                   \
     if (args.opts.lineno)                                                      \
@@ -203,12 +223,46 @@ int main(int argc, char **argv) {
     putchar(args.opts.nuldata ? '\0' : '\n');                                  \
   } while (0)
 
+#define OUTPUT_LINE /* args.opts, file, lineno, lineoff, line, len, dfa */     \
+  do {                                                                         \
+    if (args.opts.count || args.opts.list || args.opts.nlist)                  \
+      break;                                                                   \
+    if (args.opts.quiet)                                                       \
+      break;                                                                   \
+                                                                               \
+    if (args.opts.onlymat && !args.opts.invert) {                              \
+      uint8_t *begin = line + len; /* rightmost to leftmost */                 \
+      for (struct dstate *dstate = rev_dfa;;                                   \
+           dstate = dstate->transitions[*--begin]) {                           \
+        if (dstate->accepting) {                                               \
+          uint8_t *end = begin; /* shortest to longest */                      \
+          for (struct dstate *dstate = fwd_dfa;;                               \
+               dstate = dstate->transitions[*end++]) {                         \
+            if (dstate->accepting)                                             \
+              OUTPUT_MATCH;                                                    \
+            else if (dstate->terminating)                                      \
+              break;                                                           \
+            if (end == line + len)                                             \
+              break;                                                           \
+          }                                                                    \
+        } else if (dstate->terminating)                                        \
+          break;                                                               \
+        if (begin == line)                                                     \
+          break;                                                               \
+      }                                                                        \
+    } else {                                                                   \
+      uint8_t *begin = line, *end = line + len;                                \
+      OUTPUT_MATCH;                                                            \
+    }                                                                          \
+  } while (0)
+
 #define OUTPUT_FILE /* args.opts, file, lineno, lineoff, count */              \
   do {                                                                         \
     if (!args.opts.count && (count ? !args.opts.list : !args.opts.nlist))      \
       break;                                                                   \
     if (args.opts.quiet)                                                       \
       break;                                                                   \
+                                                                               \
     if (args.opts.filehd)                                                      \
       printf("%s%c", *file, args.opts.nulname ? '\0' : ':');                   \
     if (args.opts.lineno)                                                      \
@@ -217,14 +271,14 @@ int main(int argc, char **argv) {
       printf("%zu:", line - line + 1);                                         \
     if (args.opts.byteoff)                                                     \
       printf("%zu:", line - line + lineoff);                                   \
-    if (args.opts.list || args.opts.nlist)                                     \
-      printf("%s%c", *file, args.opts.nulname ? '\0' : '\n');                  \
-    else if (args.opts.count)                                                  \
+    if (args.opts.count)                                                       \
       printf("%zu\n", count);                                                  \
+    else if (args.opts.list || args.opts.nlist)                                \
+      printf("%s%c", *file, args.opts.nulname ? '\0' : '\n');                  \
   } while (0)
 
   int exit_status = EXIT_NOMATCH;
-  char ieol = args.opts.nuldata ? '\0' : '\n';
+  uint8_t ieol = args.opts.nuldata ? '\0' : '\n';
 
   for (char **file = args.files; *file; file++) {
     if (args.opts.quiet && exit_status == EXIT_MATCH)
@@ -264,7 +318,7 @@ int main(int argc, char **argv) {
           OUTPUT_LINE;
           if (args.opts.quiet || exit_status != EXIT_ERROR)
             exit_status = EXIT_MATCH; // without '-q', EXIT_ERROR takes priority
-          if (args.opts.list || args.opts.quiet)
+          if (args.opts.list && !args.opts.count || args.opts.quiet)
             break; // no need to process more lines
         }
         lineno++, lineoff += len + 1;
@@ -303,7 +357,7 @@ int main(int argc, char **argv) {
         OUTPUT_LINE;
         if (args.opts.quiet || exit_status != EXIT_ERROR)
           exit_status = EXIT_MATCH; // without '-q', EXIT_ERROR takes priority
-        if (args.opts.list || args.opts.quiet)
+        if (args.opts.list && !args.opts.count || args.opts.quiet)
           break; // no need to process more lines
       }
       lineno++, lineoff += len + 1;
