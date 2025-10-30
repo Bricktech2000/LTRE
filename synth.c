@@ -2,11 +2,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-// steal implementation details
+// steal implementation details. this probably has undefined behavior
 struct dstate {
   struct dstate *transitions[256];
   bool accepting, terminating;
-  unsigned char _[];
 };
 
 bool run(struct dstate *dfa) {

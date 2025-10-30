@@ -269,7 +269,7 @@ int main(void) {
   test("\a", .errors = true);
   test("\b", .errors = true);
   test("~~a", .errors = true);
-#define NAT_OVF "9999999999999999999999999999999999999999"
+#define NAT_OVF "999999999999999999999999999999999999999"
   test("a{" NAT_OVF "}", .errors = true);
   test("a{" NAT_OVF ",}", .errors = true);
   test("a{," NAT_OVF "}", .errors = true);

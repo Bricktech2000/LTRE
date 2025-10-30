@@ -90,12 +90,12 @@ Supported features are as follows:
 | ----------------------- | ---------- | --------------------------------------------------------- | ---------------------------- |
 | Literal Character       | `a`        | Symbol consisting of the literal character `a`            | `symbol`                     |
 | Metacharacter Escape    | `\+`       | Symbol consisting of the metacharacter `+`                | `symbol`                     |
-| Simple Escape           | `\r`       | Symbol corresponding to the simple escape `\r`            | `symbol`                     |
+| Simple Escape           | `\r`       | Symbol associated with the simple escape `\r` (see below) | `symbol`                     |
 | Hexadecimal Escape      | `\x41`     | Symbol with character code `0x41`                         | `symbol`                     |
 | Symbol Promotion        | any symbol | Singleton set containing the symbol                       | `symbol -> symset`           |
 | Character Range         | `a-z`      | Set of all characters from `a` to `z` inclusively         | `(symbol, symbol) -> symset` |
 | Symset Wildcard         | `.`        | Set of all characters                                     | `symset -> symset`           |
-| Shorthand               | `\d`       | Set of characters in the shorthand `\d`                   | `symset`                     |
+| Shorthand               | `\d`       | Set of characters in the shorthand `\d` (see below)       | `symset`                     |
 | Symset Complement       | `~u`       | Set of all characters not in `u`                          | `symset -> symset`           |
 | Symset Union            | `[uv]`     | Set of characters in `u` or in `v`                        | `[symset] -> symset`         |
 | Symset Intersection     | `<uv>`     | Set of characters in `u` and in `v`                       | `[symset] -> symset`         |
@@ -125,7 +125,7 @@ Supported features are as follows:
 | Complement              | `!r`       | Words not in `r`                                          | `regex -> regex`             |
 | Grouping                | `(r)`      | Words in the subexpression `r`                            | `regex -> regex`             |
 
-The only 0-factoring of the empty word is the empty list; no other word has a 0-factoring. Dual operations are dual with respect to complementation.
+The empty word has a unique 0-factoring, namely the empty list; no other word has 0-factorings. Dual operations are dual with respect to complementation.
 
 Alternation, intersection and biconditional have the lowest precedence, followed by complementation, followed by dual concatenation, followed by concatenation, followed by intercalation and dual intercalation, followed by quantification and dual quantification, followed by symset complementation. Alternation, intersection and biconditional are right-associative, and so are intercalation and dual intercalation. At most one complement may be applied to a `regex` per grouping level, and at most one symset complement may be applied to a `symset` per symset union or intersection level.
 

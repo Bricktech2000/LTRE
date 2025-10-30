@@ -85,7 +85,7 @@ struct regex {
     TYPE_COMPL,  // !r
     TYPE_CONCAT, // rs
     TYPE_REPEAT, // r* r+ r? r{m,n}
-    TYPE_SYMSET, // a-b [uv] <uv> ~u
+    TYPE_SYMSET, // a a-b [uv] <uv> ~u
   } type;
   bool sym_incl; // see `symset` field below
   // a regular expression is nullable if and only if it accepts the empty word.
@@ -365,8 +365,7 @@ static char *regex_fmt(struct regex *regex, char *buf, enum regex_type prec) {
     }
     break;
   case TYPE_SYMSET:;
-    char *fmt = symset_fmt(regex->symset);
-    strcpy(buf, fmt), buf += strlen(fmt);
+    strcpy(buf, symset_fmt(regex->symset)), buf += strlen(buf);
     break;
   }
 
@@ -1234,25 +1233,16 @@ static uint8_t parse_escape(char **pattern, char **error) {
   if (**pattern && (escape = strchr(escapes, **pattern)) && ++*pattern)
     return SIMPLE_CODEPTS[escape - escapes];
 
-  if (**pattern == 'x' && ++*pattern) {
-    uint8_t chr = parse_hexbyte(pattern, error);
-    if (*error)
-      return 0;
-    return chr;
-  }
+  if (**pattern == 'x' && ++*pattern)
+    return parse_hexbyte(pattern, error);
 
   *error = "unknown escape";
   return 0;
 }
 
 static uint8_t parse_symbol(char **pattern, char **error) {
-  if (**pattern == '\\' && ++*pattern) {
-    uint8_t escape = parse_escape(pattern, error);
-    if (*error)
-      return 0;
-
-    return escape;
-  }
+  if (**pattern == '\\' && ++*pattern)
+    return parse_escape(pattern, error);
 
   if (**pattern == '\0') {
     *error = "expected symbol";
