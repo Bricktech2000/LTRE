@@ -13,3 +13,5 @@ set grepformat=%f:%l:%c:%m
 " for example, to grep for a literal | recursively, use :gr \\\\| **<cr>. Vim
 " turns \| into | and gives \\\|, then the shell turns \\ into \ and \| into |
 " and gives \|, then the grep turns \| into | and searches for that.
+
+" vim:tw=78:

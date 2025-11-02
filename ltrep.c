@@ -296,11 +296,11 @@ int main(int argc, char **argv) {
       if (fd == -1)
         goto perror_continue;
       off_t size = lseek(fd, 0, SEEK_END);
-      if (size == -1)
+      if (size == -1 ? close(fd), 1 : 0)
         goto perror_continue;
       uint8_t *data =
           size ? mmap(0, size, PROT_READ, MAP_PRIVATE, fd, 0) : &(uint8_t){0};
-      if (data == MAP_FAILED)
+      if (data == MAP_FAILED ? close(fd), 1 : 0)
         goto perror_continue;
 
       size_t lineno = 0, count = 0, lineoff = 0;
@@ -324,7 +324,7 @@ int main(int argc, char **argv) {
         lineno++, lineoff += len + 1;
       }
 
-      if (size != 0 && munmap(data, size) == -1)
+      if (size && munmap(data, size) == -1 ? close(fd), 1 : 0)
         goto perror_continue;
       if (close(fd) == -1)
         goto perror_continue;
@@ -348,7 +348,7 @@ int main(int argc, char **argv) {
         len == cap ? line = realloc(line, cap *= 2) : 0;
         dstate = dstate->transitions[c];
       }
-      if (ferror(fp) && (free(line), 1))
+      if (ferror(fp) ? free(line), fclose(fp), 1 : 0)
         goto perror_continue;
       if (feof(fp) && len == 0)
         break; // ignore partial line if it's empty
