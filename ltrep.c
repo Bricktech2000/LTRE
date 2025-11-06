@@ -61,55 +61,67 @@ enum { EXIT_MATCH, EXIT_NOMATCH, EXIT_ERROR };
 // used in the output to delineate matches. for reporting matches that contain
 // both \n and \0 bytes, you might use tr(1).
 
+// keep in sync with ltrep.1
 #define VER "LTREP 0.3\n"
-#define DESC "LTREP --- print lines matching a pattern\n"
-#define HELP "Try 'ltrep -h' for more information.\n"
+#define INV "Unrecognized option '-%.*s'.\n"
+#define TRY "Try 'ltrep -h' for more information.\n"
+#define NAME "LTREP --- print lines matching a pattern\n"
 #define USAGE                                                                  \
   "Usage:\n"                                                                   \
   "  ltrep [options...] [--] <pattern> [files...]\n"                           \
   "  ltrep [options...] -h,-V\n"
 #define OPTS                                                                   \
   "Options:\n"                                                                 \
-  "  -v     invert match; print non-matching lines\n"                          \
-  "  -p/-x  partial match; print lines that contain a match\n"                 \
-  "  -o     match only; print the matches, not the lines\n"                    \
-  "  -i/-s  ignore case; match case-insensitively\n"                           \
-  "  -S     smart case; set '-i' if pattern is all-lowercase\n"                \
-  "  -F/-E  parse the pattern as a fixed string, not a regex\n"                \
-  "  -H/-h  prefix matches with their file name\n"                             \
-  "  -n/-N  prefix matches with their 1-based line number\n"                   \
-  "  -k/-K  prefix matches with their 1-based column number\n"                 \
-  "  -b     prefix matches with their 0-based byte offset\n"                   \
-  "  -T/-t  prefix matches with a \\t character\n"                             \
-  "  -c     only print a count of matching lines per file\n"                   \
-  "  -l     only print a list of files containing matches\n"                   \
-  "  -L     only print a list of files containing no matches\n"                \
-  "  -0     terminate all file names with \\0, not : or \\n\n"                 \
-  "  -z/-Z  use line terminator \\0 for input and output data\n"               \
-  "  -q     produce no output and prioritize exit status 0\n"
-#define EXTRA                                                                  \
-  "Options '-i/-s' and '-S' override eachother.\n"                             \
-  "Options '-p/-x' and '-o' override eachother.\n"                             \
-  "A '--' is needed when <pattern> begins in '-'.\n"                           \
-  "A file of '-' denotes standard input. If no\n"                              \
-  "files are provided, read from standard input.\n"                            \
+  "  -v     Invert match; print non-matching lines.\n"                         \
+  "  -p/-x  Partial match; print lines that contain a match.\n"                \
+  "  -o     Match only; print the matches, not the lines.\n"                   \
+  "  -i/-s  Ignore case; match case-insensitively.\n"                          \
+  "  -S     Smart case; set '-i' if pattern is all-lowercase.\n"               \
+  "  -F/-E  Parse the pattern as a fixed string, not a regex.\n"               \
+  "  -H/-h  Prefix matches with their file name.\n"                            \
+  "  -n/-N  Prefix matches with their 1-based line number.\n"                  \
+  "  -k/-K  Prefix matches with their 1-based column number.\n"                \
+  "  -b     Prefix matches with their 0-based byte offset.\n"                  \
+  "  -T/-t  Prefix matches with a \\t so they line up.\n"                      \
+  "  -c     Only print a count of matching lines per file.\n"                  \
+  "  -l     Only print a list of files containing matches.\n"                  \
+  "  -L     Only print a list of files containing no matches.\n"               \
+  "  -0     Terminate all file names with \\0, not : or \\n.\n"                \
+  "  -z/-Z  Use line terminator \\0 for input and output data.\n"              \
+  "  -q     Produce no output and prioritize exit status 0.\n"
+#define STATUS                                                                 \
   "Exit status is 2 if errors occurred, else 0 if\n"                           \
   "a line matched, else 1; with '-q' it is 0 if a\n"                           \
-  "line matched, else 2 if errors occurred, else 1.\n"                         \
-  "Show help and version info with '-h' and '-V'.\n"
-#define INV "Unrecognized option '-%.*s'.\n"
+  "line matched, else 2 if errors occurred, else 1.\n"
+#define HELP                                                                   \
+  "" NAME "\n"                                                                 \
+  "LTREP searches files for lines matching a pattern.\n"                       \
+  "By default, a line is printed only when the pattern\n"                      \
+  "matches the whole line. LTREP uses finite automata\n"                       \
+  "and guarantees linear-time searching.\n"                                    \
+  "\n" USAGE "\n"                                                              \
+  "A '--' is needed when the pattern begins in '-'.\n"                         \
+  "A file of '-' denotes standard input. If no files\n"                        \
+  "are provided, read from standard input.\n"                                  \
+  "Show help and version info with '-h' and '-V'.\n"                           \
+  "\n" OPTS "\n"                                                               \
+  "Options '-i/-s' and '-S' override eachother.\n"                             \
+  "Options '-p/-x' and '-o' override eachother.\n"                             \
+  "Matches may overlap so when '-o' is supplied the\n"                         \
+  "output size may be quadratic in the input size.\n"                          \
+  "\n" STATUS ""
 
 struct args parse_args(char **argv) {
   struct args args = {0};
 
   if (!*++argv)
-    fputs(DESC HELP, stderr), exit(EXIT_ERROR);
+    fputs(NAME TRY, stderr), exit(EXIT_ERROR);
 
   for (; *argv && **argv == '-'; argv++) {
     if (strcmp(*argv, "--") == 0 && argv++)
       break;
     if (strcmp(*argv, "-h") == 0 && !argv[1])
-      fputs(DESC "\n" USAGE "\n" OPTS "\n" EXTRA, stdout), exit(EXIT_SUCCESS);
+      fputs(HELP, stdout), exit(EXIT_SUCCESS);
     if (strcmp(*argv, "-V") == 0 && !argv[1])
       fputs(VER, stdout), exit(EXIT_SUCCESS);
 
@@ -117,7 +129,7 @@ struct args parse_args(char **argv) {
       if ((p = strchr(opts, *opt)) && *opt != ' ')
         ((bool *)&args.opts)[p - opts >> 1] = !(p - opts & 1);
       else
-        fprintf(stderr, INV HELP, *opt == '-' ? -1 : 1, opt), exit(EXIT_ERROR);
+        fprintf(stderr, INV TRY, *opt == '-' ? -1 : 1, opt), exit(EXIT_ERROR);
 
       args.opts.smart &= *opt != 'i' && *opt != 's';   // '-i/-s' override '-S'
       args.opts.onlymat &= *opt != 'p' && *opt != 'x'; // '-p/-x' override '-o'
@@ -125,7 +137,7 @@ struct args parse_args(char **argv) {
   }
 
   if (!*argv)
-    fputs(USAGE HELP, stderr), exit(EXIT_ERROR);
+    fputs(USAGE TRY, stderr), exit(EXIT_ERROR);
   args.pattern = *argv++;
   static char *read_stdin[] = {"-", NULL};
   args.files = *argv ? argv : read_stdin;

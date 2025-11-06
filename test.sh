@@ -1,6 +1,7 @@
 # when updating the test suite make sure to <c-v> ... r0gvg<c-a>
 
 rm test.act
+true
 
 #else   000 -v, -p, -i, -S
 echo $? 001 >> test.act; echo -e 'bb' | bin/ltrep -i 'Aa' >> test.act

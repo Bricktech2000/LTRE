@@ -1,0 +1,732 @@
+.\" keep in sync with ltrep.c
+.\" see man-pages(7) for a style guide. also, always inspect the output of
+.\" `groff -man -Tpdf ltrep.1` and make sure the right glyphs get produced,
+.\" especially hyphens, dashes, quotes, apostrophes, tildes and carets.
+.TH LTREP 1 2025-11-02 "LTREP 0.3" "User Commands"
+.SH NAME
+.\" don't use an em dash here
+LTREP \- print lines matching a pattern
+.SH SYNOPSIS
+.\" bold is verbatim, italics is placeholder, roman is metacharacter
+.B ltrep
+.RI [ options ...]\&
+.RB [ \-\- ]
+.I pattern
+.RI [ files ...]
+.br
+.B ltrep
+.RI [ options ...]\&
+.BR \-h , \-V
+.SH DESCRIPTION
+.PP
+.B LTREP
+searches
+.I files
+for lines matching
+.IR pattern .
+By default, a line is printed only when
+.I pattern
+matches the whole line.
+.B LTREP
+uses finite automata and guarantees linear-time searching.
+.PP
+A
+.B \-\-
+is needed when
+.I pattern
+begins in \(oq\-\(cq.
+.PP
+A file of \(oq\-\(cq denotes standard input. If no
+.I files
+are provided, read from standard input.
+.PP
+Show help and version info with
+.BR \-h " and " \-V .
+.SH OPTIONS
+.PP
+All options are unset by default. An option listed as
+.RI \(oq \-a \(cq
+is set by passing
+.I \-a
+and can\(cqt be unset, while an option listed as
+.RI \(oq \-a / \-b \(cq
+is set by passing
+.I \-a
+and is unset by passing
+.IR \-b .
+The flag supplied last takes precedence.
+.TP
+.B \-v
+Invert match; print non-matching lines.
+.TP
+.BR \-p / \-x
+Partial match; print lines that contain a match.
+.br
+Overrides
+.BR \-o .
+.TP
+.B \-o
+Match only; print the matches, not the lines.
+.br
+Matches may overlap so the output size may be quadratic in the input size.
+.br
+Overrides
+.BR \-p / \-x .
+.TP
+.BR \-i / \-s
+Ignore case; match case-insensitively.
+.br
+Overrides
+.BR \-S .
+.TP
+.B \-S
+Smart case; set
+.B \-i
+if pattern is all-lowercase.
+.br
+Overrides
+.BR \-i / \-s .
+.TP
+.BR \-F / \-E
+Parse the pattern as a fixed string, not a regex.
+.TP
+.BR \-H / \-h
+Prefix matches with their file name.
+.TP
+.BR \-n / \-N
+Prefix matches with their \%1-based line number.
+.TP
+.BR \-k / \-K
+Prefix matches with their \%1-based column number.
+.TP
+.B \-b
+Prefix matches with their \%0-based byte offset.
+.TP
+.BR \-T / \-t
+Prefix matches with a \(rst so they line up.
+.TP
+.B \-c
+Only print a count of matching lines per file.
+.TP
+.B \-l
+Only print a list of files containing matches.
+.TP
+.B \-L
+Only print a list of files containing no matches.
+.TP
+.B \-0
+Terminate all file names with \(rs0, not : or \(rsn.
+.TP
+.BR \-z / \-Z
+Use line terminator \(rs0 for input and output data.
+.TP
+.B \-q
+Produce no output and prioritize exit status 0.
+.\" keep in sync with patterns.md
+.SH PATTERNS
+.SS Notes
+.PP
+Matching is exact by default; for partial matching, surround a pattern with
+.BR % s.
+The metacharacter
+.B %
+is a shorthand for
+.BR .* .
+.PP
+Whitespace is largely ignored; to match a whitespace character, use an escape
+like
+.BR \(rs\~ " or " \(rsn .
+All metacharacters,
+.BR \%\(rs\-.\(ti[]<>%{}*+?:|&=!(\~) ,
+must be escaped to be matched literally, even inside character classes.
+.PP
+Character ranges can appear outside character classes. For example,
+.B \%0\-9+
+matches a non-empty sequence of digits. Character classes are complemented by
+prefixing the opening bracket with
+.BR \(ti .
+For example,
+.B \(ti[abc]
+matches any single character that\(cqs not
+.BR a " or " b " or " c .
+Single characters and character ranges can be complemented as well. For
+example,
+.B \(ti\(rsn*
+matches a sequence of non-newline characters and
+.B \%[aeiou\~\(tia\-z]
+matches any single character that\(cqs not a lowercase consonant (insignificant
+whitespace added for clarity).
+.PP
+To match \(lqword\(rq characters (alphanumeric characters plus the underscore),
+you might use
+.BR [\(rsm_] .
+The metacharacter
+.B .
+matches any character, including newlines; to match any single character
+that\(cqs not a newline, you might use
+.BR \(ti\(rsn .
+To match patters like \(oqnumbers separated by commas\(cq you might use
+intercalation:
+.B (\(rsd+)*!,
+(redundant parentheses added for clarity). To match patterns like
+\(oqidentifiers which are not keywords\(cq you might use intersection and
+complementation:
+.B \(rsm*\~&\~!(if|else|for)
+(insignificant whitespace added for clarity).
+.\" don't use title case for .SS
+.SS Supported syntax
+.TP
+.I a
+.I Literal Character
+:: symbol
+.br
+Symbol consisting of the literal character
+.IR a .
+.br
+Works for any printable character that\(cqs not a metacharacter.
+.TP
+.BI \(rs +
+.I Metacharacter Escape
+:: symbol
+.br
+Symbol consisting of the metacharacter
+.IR \&+ .
+.br
+Works for any metacharacter,
+.BR \%\(rs\-.\(ti[]<>%{}*+?:|&=!(\~) .
+.TP
+.BI \(rs r
+.I Simple Escape
+:: symbol
+.br
+Symbol associated with the simple escape
+.B \(rs\c
+.IR r .
+.br
+Available simple escapes are listed further below.
+.TP
+.BI \(rsx 41
+.I Hexadecimal Escape
+:: symbol
+.br
+Symbol with character code
+.B 0x\c
+.IR 41 .
+.br
+Takes exactly two digits.
+.TP
+any symbol
+.I Symbol Promotion
+:: symbol \-> symset
+.br
+Singleton set containing the symbol.
+.TP
+.IB a \- z
+.I Character Range
+:: (symbol, symbol) \-> symset
+.br
+Set of all characters from
+.IR a " to " z
+inclusively.
+.br
+Supports wraparound; for example,
+.BR \%z\-a " means " \%\(tib\-y .
+.TP
+.B .
+.I Symset Wildcard
+:: symset
+.br
+Set of all characters.
+.TP
+.BI \(rs d
+.I Shorthand
+:: symset
+.br
+Set of characters in the shorthand
+.B \(rs\c
+.IR d .
+.br
+Available shorthands are listed further below.
+.TP
+.BI \(ti u
+.I Symset Complement
+:: symset \-> symset
+.br
+Set of all characters not in
+.IR u .
+.br
+At most one may be applied per symset union/intersection
+level.
+.TP
+.BI [ uv\c
+.RB ... ]
+.I Symset Union
+:: [symset] \-> symset
+.br
+Set of characters in
+.IR u " or in " v .
+.TP
+.BI < uv\c
+.RB ... >
+.I Symset Intersection
+:: [symset] \-> symset
+.br
+Set of characters in
+.IR u " and in " v .
+.TP
+any symset
+.I Symset Promotion
+:: symset \-> regex
+.br
+Length-one words over the symset.
+.TP
+.B %
+.I Wildcard
+:: regex
+.br
+All words.
+.TP
+.IB r {}
+.I Empty Repetition
+:: regex \-> regex
+.br
+Words some \%0-factoring of which consists of
+.IR r s.
+.TP
+.IB r { 4 }
+.I Exact Repetition
+:: regex \-> regex
+.br
+Words some
+.IR \%4 -\c
+factoring of which consists of
+.IR r s.
+.TP
+.IB r { 3 , 5 }
+.I Bounded Repetition
+:: regex \-> regex
+.br
+Words some
+.IR \%3 \(en 5 -\c
+factoring of which consists of
+.IR r s.
+.TP
+.IB r { 3 ,}
+.I Minimum Repetition
+:: regex \-> regex
+.br
+Words some
+.RI \%\(>= 3 -\c
+factoring of which consists of
+.IR r s.
+.TP
+.IB r {, 5 }
+.I Maximum Repetition
+:: regex \-> regex
+.br
+Words some
+.RI \%\(<= 5 -\c
+factoring of which consists of
+.IR r s.
+.TP
+.IB r *
+.I Kleene Star
+:: regex \-> regex
+.br
+Words some \%n-factoring of which consists of
+.IR r s.
+.TP
+.IB r +
+.I Kleene Plus
+:: regex \-> regex
+.br
+Words some \%\(>=1-factoring of which consists of
+.IR r s.
+.TP
+.IB r ?
+.I Optional
+:: regex \-> regex
+.br
+Words some \%\(<=1-factoring of which consists of
+.IR r s.
+.TP
+.IB r :{}
+.I Dual Empty Repetition
+:: regex \-> regex
+.br
+Words all \%0-factorings of which contain some
+.IR r .
+.TP
+.IB r :{ 4 }
+.I Dual Exact Repetition
+:: regex \-> regex
+.br
+Words all
+.IR \%4 -\c
+factorings of which contain some
+.IR r .
+.TP
+.IB r :{ 3 , 5 }
+.I Dual Bounded Repetition
+:: regex \-> regex
+.br
+Words all
+.IR \%3 \(en 5 -\c
+factorings of which contain some
+.IR r .
+.TP
+.IB r :{ 3 ,}
+.I Dual Minimum Repetition
+:: regex \-> regex
+.br
+Words all
+.RI \%\(>= 3 -\c
+factorings of which contain some
+.IR r .
+.TP
+.IB r :{, 5 }
+.I Dual Maximum Repetition
+:: regex \-> regex
+.br
+Words all
+.RI \%\(<= 5 -\c
+factorings of which contain some
+.IR r .
+.TP
+.IB r :*
+.I Dual Kleene Star
+:: regex \-> regex
+.br
+Words all \%n-factorings of which contain some
+.IR r .
+.TP
+.IB r :+
+.I Dual Kleene Plus
+:: regex \-> regex
+.br
+Words all \%\(>=1-factorings of which contain some
+.IR r .
+.TP
+.IB r :?
+.I Dual Optional
+:: regex \-> regex
+.br
+Words all \%\(<=1-factorings of which contain some
+.IR r .
+.TP
+.IB r* ! s
+.I Intercalation
+:: (regex, regex) \-> regex
+.br
+Words in
+.I r*
+but with
+.I s
+inserted between each
+.IR r .
+.br
+Works for any quantifier,
+.BR {}*+? .
+.TP
+.IB r : * ! s
+.I Dual Intercalation
+:: (regex, regex) \-> regex
+.br
+Words in
+.IB r : *
+but with
+.I s
+inserted between each
+.IR r .
+.br
+Works for any quantifier,
+.BR {}*+? .
+.TP
+.I rs
+.I Concatenation
+:: (regex, regex) \-> regex
+.br
+Words some \%2-factoring of which has head
+.IR r " and tail " s .
+.TP
+.IB r : s
+.I Dual Concatenation
+:: (regex, regex) \-> regex
+.br
+Words all \%2-factorings of which have head
+.IR r " or tail " s .
+.TP
+.IB r | s
+.I Alternation
+:: (regex, regex) \-> regex
+.br
+Words in
+.IR r " or in " s .
+.TP
+.IB r & s
+.I Intersection
+:: (regex, regex) \-> regex
+.br
+Words in
+.IR r " and in " s .
+.TP
+.IB r = s
+.I Biconditional
+:: (regex, regex) \-> regex
+.br
+Words in
+.IR r " if and only if in " s .
+.TP
+.BI ! r
+.I Complement
+:: regex \-> regex
+.br
+Words not in
+.IR r .
+.br
+At most one may be applied per grouping level.
+.TP
+.BI ( r )
+.I Grouping
+:: regex \-> regex
+.br
+Words in the subexpression
+.IR r .
+.PP
+An \(oq\%n-factoring\(cq of a word is an \%n-tuple of strings whose
+concatenation is that word. The empty word has a unique \%0-factoring,
+namely the \%0-tuple; no other word has \%0-factorings.
+.PP
+Insignificant whitespace can appear anywhere except within escapes, character
+ranges, shorthands, quantifiers, and intercalators.
+.PP
+Dual operators are dual with respect to complementation.
+.SS Precedence
+.PP
+In decreasing order, and otherwise right associative:
+.PP
+.nr pd \n(PD
+.nr PD 0
+.IP "\h'1n'\(bu" 4n
+Escapes;
+.IP "\h'1n'\(bu" 4n
+Character ranges, shorthands;
+.IP "\h'1n'\(bu" 4n
+Symset complementation;
+.IP "\h'1n'\(bu" 4n
+Quantification, dual quantification;
+.IP "\h'1n'\(bu" 4n
+Intercalation, dual intercalation;
+.IP "\h'1n'\(bu" 4n
+Concatenation;
+.IP "\h'1n'\(bu" 4n
+Dual concatenation;
+.IP "\h'1n'\(bu" 4n
+Complementation;
+.IP "\h'1n'\(bu" 4n
+Alternation, intersection, biconditional.
+.nr PD \n(pd
+.\" don't use title case for .SS
+.SS Simple escapes
+.TP
+.B \(rsb
+.I BACKSPACE
+.br
+.B \(rsx08
+.TP
+.B \(rsf
+.I FORM FEED
+.br
+.B \(rsx0c
+.TP
+.B \(rsn
+.I LINE FEED
+.br
+.B \(rsx0a
+.TP
+.B \(rsr
+.I CARRIAGE RETURN
+.br
+.B \(rsx0d
+.TP
+.B \(rst
+.I HORIZONTAL TABULATION
+.br
+.B \(rsx09
+.TP
+.B \(rsv
+.I VERTICAL TABULATION
+.br
+.B \(rsx0b
+.TP
+.B \(rse
+.I ESCAPE
+.br
+.B \(rsx1b
+.PP
+.SS Shorthands
+.TP
+.BR \(rsm ", " \(ti\(rsM
+.I isalnum
+(C89)
+.br
+.BR \%[0\-9A\-Za\-z] ,
+.BR \%[\(rsd\(rsa] ,
+.BR \%<\(rsg\(rsQ>
+.TP
+.BR \(rsa ", " \(ti\(rsA
+.I isalpha
+(C89)
+.br
+.BR \%[A\-Za\-z] ,
+.BR \%[\(rsu\(rsl] ,
+.BR \%<\(rsm\(rsD>
+.TP
+.BR \(rsk ", " \(ti\(rsK
+.I isblank
+(C99)
+.br
+.BR \%[\(rst\(rs\~] ,
+.BR \%<\(rss\(ti\(rsn\-\(rsr>
+.TP
+.BR \(rsc ", " \(ti\(rsC
+.I iscntrl
+(C89)
+.br
+.BR \%[\(rsx00\-\(rsx1f\(rsx7f] ,
+.BR \%<\(rsz\(rsP>
+.TP
+.BR \(rsd ", " \(ti\(rsD
+.I isdigit
+(C89)
+.br
+.BR \%0\-9 ,
+.BR \%<\(rsm\(rsA>
+.TP
+.BR \(rsg ", " \(ti\(rsG
+.I isgraph
+(C89)
+.br
+.BR \%\(rs!\-\(rs\(ti ,
+.BR \%[\(rsq\(rsm] ,
+.BR \%<\(rsp\(ti\(rs\~>
+.TP
+.BR \(rsl ", " \(ti\(rsL
+.I islower
+(C89)
+.br
+.BR \%a\-z ,
+.BR \%<\(rsa\(rsU>
+.TP
+.BR \(rsp ", " \(ti\(rsP
+.I isprint
+(C89)
+.br
+.BR \%\(rs\~\-\(rs\(ti ,
+.BR \%[\(rsg\(rs\~] ,
+.BR \%<\(rsz\(rsC>
+.TP
+.BR \(rsq ", " \(ti\(rsQ
+.I ispunct
+(C89)
+.br
+.BR \%[\(rs!\-/\(rs:\-@\(rs[\-\(ga\(rs{\-\(rs\(ti] ,
+.BR \%<\(rsg\(rsM>
+.TP
+.BR \(rss ", " \(ti\(rsS
+.I isspace
+(C89)
+.br
+.BR \%[\(rst\-\(rsr\(rs\~] ,
+.BR \%[\(rsk\(rsn\-\(rsr]
+.TP
+.BR \(rsu ", " \(ti\(rsU
+.I isupper
+(C89)
+.br
+.BR \%A\-Z ,
+.BR \%<\(rsa\(rsL>
+.TP
+.BR \(rsh ", " \(ti\(rsH
+.I isxdigit
+(C89)
+.br
+.BR \%[0\-9A\-Fa\-f]
+.TP
+.BR \(rsz ", " \(ti\(rsZ
+.I isascii
+(BSD)
+.br
+.BR \%\(rsx00\-\(rsx7f ,
+.BR \%[\(rsc\(rsp]
+.SH "EXIT STATUS"
+.PP
+Exit status is:
+.PP
+.nr pd \n(PD
+.nr PD 0
+.TP
+.B 2
+if errors occurred; else,
+.TP
+.B 0
+if a line matched; else,
+.TP
+.B 1
+(no lines matched, no errors occurred).
+.nr PD \n(pd
+.PP
+With
+.B \-q
+it is:
+.PP
+.nr pd \n(PD
+.nr PD 0
+.TP
+.B 0
+if a line matched; else,
+.TP
+.B 2
+if errors occurred; else,
+.TP
+.B 1
+(no lines matched, no errors occurred).
+.nr PD \n(pd
+.\" keep in sync with README.md
+.SH EXAMPLES
+.PP
+Search for string literals in some C files, handling any escape sequences,
+and print their line and column numbers:
+.PP
+.in +4n
+.EX
+.RB "$ " "ltrep \-Hnko \(aq\(dq(\(ti[\(rs\(rs\(dq]|\(rs\(rs.)*\(dq\(aq \c"
+.B "ltrep.c ltre.c"
+ltrep.c:1:10:\(dqltre.h\(dq
+ltrep.c:19:14:\(dqv pxo isS FEHhnNkKb Ttc l L 0 zZq \(dq
+ltrep.c:65:13:\(dqLTREP 0.3\(rsn\(dq
+ltrep.c:66:14:\(dqLTREP --- print lines matching a pattern\(rsn\(dq
+\&...
+.EE
+.in
+.PP
+Search for null-surrounded sequences of printable and whitespace characters,
+somewhat like
+.BR strings (1),
+and print their offset into the file:
+.PP
+.in +4n
+.EX
+.RB "$ " "ltrep \-bz \(aq[\(rsp\(rss]{4,}\(aq bin/ltrep | \c"
+.B "tr \(aq\(rs0\(rsn\(aq \(aq\(rsn\(rs0\(aq"
+\&...
+46832:v pxo isS FEHhnNkKb Ttc l L 0 zZq 
+46872:unexpected nonprintable character
+46906:LTREP 0.3
+46917:parse error: %s near \(aq%.16s\(aq
+46947:%s%c
+\&...
+.EE
+.in
+.
+.\" vim:tw=78:ft=nroff:

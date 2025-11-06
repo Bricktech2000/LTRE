@@ -1,12 +1,13 @@
+# keep in sync with ltre.c
 <regex> ::= ("!" <ws>)? <term> (("|" | "&" | "=") <ws> <regex>)?
 <term> ::= <factor>* <ws> (":" <ws> <term>)?
 <factor> ::= <atom> (<ws> ":"? ("*" | "+" | "?" | "{" <natural>? ("," <natural>?)? "}"))* ("!" <ws> <factor>)? <ws>
 <atom> ::= "%" <ws> | <symset> | "(" <ws> <regex> ")" <ws>
-<symset> ::= "~"? ("." | "\\" <shorthand> | <symbol> ("-" <symbol>)? | "[" <ws> <symset>* "]" | "<" <ws> <symset>* ">") <ws>
+<symset> ::= ("~" <ws>)? ("." | "\\" <shorthand> | <symbol> ("-" <symbol>)? | "[" <ws> <symset>* "]" | "<" <ws> <symset>* ">") <ws>
 <shorthand> ::= (? one of "mMaAkKcCdDgGlLpPqQsSuUhHzZ" ?)
 <symbol> ::= "\\" <escape> | (? `isprint` except <metachar> ?)
 <escape> ::= (? one of "bfnrtve" ?) | "x" <hexbyte> | <metachar>
 <hexbyte> ::= (? `isxdigit` ?){2}
 <natural> ::= (? `isdigit` ?)+
 <ws> ::= (? `isspace` ?)*
-<metachar> ::= (? one of "\-.~[]<>%{}*+?:|&=!() " ?)
+<metachar> ::= (? one of "\-.~[]<>%{}*+?:|&=!( )" ?)

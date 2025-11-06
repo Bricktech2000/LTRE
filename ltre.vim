@@ -1,26 +1,26 @@
 setlocal commentstring=(\ %s\ ){}
 setlocal comments=sb:(,mb:\|,e:){}
 
-syntax match ltreLiteralChar '[^\\\-.~\[\]<>%{}*+?:|&=!() \x00-\x20\x7f-\xff]'
-syntax match ltreMetaEscape '\\[\\\-.~\[\]<>%{}*+?:|&=!() ]'hs=s+1
-syntax match ltreSymMetaEsc '\\[\\\-.~\[\]<>%{}*+?:|&=!() ]'he=e-1 contained
+syntax match ltreLiteralChar '[^\\\-.~\[\]<>%{}*+?:|&=!( )\x00-\x20\x7f-\xff]'
+syntax match ltreMetaEscape '\\[\\\-.~\[\]<>%{}*+?:|&=!( )]'hs=s+1
+syntax match ltreSymMetaEsc '\\[\\\-.~\[\]<>%{}*+?:|&=!( )]'he=e-1 contained
 syntax match ltreSimpleEscape '\\[bfnrtve]'
 syntax match ltreHexEscape '\\x\x\x'
-syntax match ltreSymsetCompl '\~\([^\\]\|\\[^x]\|\\x\x\x\)' " moved up for lower priority
-syntax match ltreCharRange '\~\?\([^\\]\|\\[^x]\|\\x\x\x\)-\([^\\]\|\\[^x]\|\\x\x\x\)'
-syntax match ltreSymsetWild '\~\?\.'
-syntax match ltreShorthand '\~\?\\[mMaAkKcCdDgGlLpPqQsSuUhHzZ]'
-syntax region ltreSymsetUnion matchgroup=PreProc start='\~\?\[' skip='\\.' end='[\]>%{}*+?:|&=!()]'
+syntax match ltreSymsetCompl '\~\_s*\([^\\]\|\\[^x]\|\\x\x\x\)' " moved up for lower priority
+syntax match ltreCharRange '\~\?\_s*\([^\\]\|\\[^x]\|\\x\x\x\)-\([^\\]\|\\[^x]\|\\x\x\x\)'
+syntax match ltreSymsetWild '\~\?\_s*\.'
+syntax match ltreShorthand '\~\?\_s*\\[mMaAkKcCdDgGlLpPqQsSuUhHzZ]'
+syntax region ltreSymsetUnion matchgroup=PreProc start='\~\?\_s*\[' skip='\\.' end='[\]>%{}*+?:|&=!()]'
       \ keepend extend contains=ltreSymMetaEsc,ltreSimpleEscape,ltreHexEscape,ltreCharRange,
       \ ltreSymsetWild,ltreSymsetCompl,ltreShorthand,ltreSymsetUnion,ltreSymsetInter
-syntax region ltreSymsetInter matchgroup=PreProc start='\~\?<' skip='\\.' end='[\]>%{}*+?:|&=!()]'
+syntax region ltreSymsetInter matchgroup=PreProc start='\~\?\_s*<' skip='\\.' end='[\]>%{}*+?:|&=!()]'
       \ keepend extend contains=ltreSymMetaEsc,ltreSimpleEscape,ltreHexEscape,ltreCharRange,
       \ ltreSymsetWild,ltreSymsetCompl,ltreShorthand,ltreSymsetUnion,ltreSymsetInter
 syntax match ltreWildcard '%'
 syntax match ltreDualConcat ':' " moved up for lower priority
 syntax match ltreQuantifier ':\?\([*+?]\|{\d*\(,\d*\)\?}\)!\?'
 syntax match ltreBooleanOp '[|&=!]'
-syntax region ltreComment start='(\s' end='){}' contains=ltreTodo
+syntax region ltreComment start='(\_s' end='){}' contains=ltreTodo
 syntax keyword ltreTodo TODO FIXME XXX NOTE contained
 
 highlight default link ltreLiteralChar Character

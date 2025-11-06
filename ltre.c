@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define METACHARS "\\-.~[]<>%{}*+?:|&=!() "
+#define METACHARS "\\-.~[]<>%{}*+?:|&=!( )"
 #define SIMPLE_ESCAPES "bfnrtve"
 #define SIMPLE_CODEPTS "\b\f\n\r\t\v\x1b"
 
@@ -1078,11 +1078,12 @@ void dfa_minimize(struct dstate *dfa) {
 #define MAKE_DIS(ID1, ID2)                                                     \
   symset_write(dis[ID1], ID2, true), symset_write(dis[ID2], ID1, true)
 
-  // flag indistinguishable states. a pair of states is indistinguishable if and
-  // only if both states have the same `accepting` value and their transitions
-  // are equal up to target state indistinguishability. to avoid dealing with
-  // cycles, we default to all states being indistinguishable then iteratively
-  // rule out the ones that aren't.
+  // flag indistinguishable states. two states are indistinguishable if and
+  // only if both states have the same `accepting` value and, were both states
+  // assumed indistinguishable, their transitions would be equal up to target
+  // state indistinguishability. to avoid dealing with cycles, we default to all
+  // states being indistinguishable then iteratively rule out the ones that
+  // aren't.
   for (struct dstate *ds1 = dfa; ds1; ds1 = ds1->next)
     for (struct dstate *ds2 = ds1->next; ds2; ds2 = ds2->next)
       if (ds1->accepting != ds2->accepting)
@@ -1095,6 +1096,8 @@ void dfa_minimize(struct dstate *dfa) {
             // use irreflexivity of distinguishability as a cheap precheck
             if (dstates[id1]->transitions[chr] !=
                 dstates[id2]->transitions[chr])
+              // `ds1` and `ds2` have not been marked distinguishable so far, so
+              // the 'were both states assumed indistinguishable' bit is covered
               if (ARE_DIS(dstates[id1]->transitions[chr]->id,
                           dstates[id2]->transitions[chr]->id)) {
                 MAKE_DIS(id1, id2), done = false;
@@ -1184,6 +1187,8 @@ bool dfa_equivalent(struct dstate *dfa1, struct dstate *dfa2) {
 //   - `regex` shall point to the error location
 //   - the returned regular expression should be `NULL`
 //   - the caller is responsible for backtracking
+
+// keep in sync with grammar.bnf
 
 static int parse_ws(char **pattern) {
   while (**pattern && isspace(**pattern))
@@ -1303,7 +1308,7 @@ static void parse_shorthand(symset_t *symset, char **pattern, char **error) {
 }
 
 static void parse_symset(symset_t *symset, char **pattern, char **error) {
-  bool compl = **pattern == '~' && ++*pattern;
+  bool compl = **pattern == '~' && ++*pattern && parse_ws(pattern);
 
   if (**pattern == '.' && ++*pattern) {
     memset(symset, 0xff, sizeof(*symset));
