@@ -1145,7 +1145,7 @@ void dfa_minimize(struct dstate *dfa) {
 
 bool dfa_equivalent(struct dstate *dfa1, struct dstate *dfa2) {
   // check whether `dfa1` and `dfa2` accept the same language. both DFAs must be
-  // minimal; see `ltre_minimize`. minimal DFAs are unique up to renumbering, so
+  // minimal; see `dfa_minimize`. minimal DFAs are unique up to renumbering, so
   // we just have to check for a graph isomorphism that preserves the initial
   // state, accepting states, and transitions
 

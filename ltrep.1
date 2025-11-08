@@ -147,32 +147,35 @@ prefixing the opening bracket with
 .BR \(ti .
 For example,
 .B \(ti[abc]
-matches any single character that\(cqs not
+matches any character except
 .BR a " or " b " or " c .
 Single characters and character ranges can be complemented as well. For
 example,
 .B \(ti\(rsn*
 matches a sequence of non-newline characters and
 .B \%[aeiou\~\(tia\-z]
-matches any single character that\(cqs not a lowercase consonant (insignificant
-whitespace added for clarity).
+matches any character except lowercase consonants (insignificant whitespace
+for clarity).
 .PP
-To match \(lqword\(rq characters (alphanumeric characters plus the underscore),
+To match \(lqword\(rq characters (alphanumeric characters plus the
+underscore),
 you might use
 .BR [\(rsm_] .
 The metacharacter
 .B .
-matches any character, including newlines; to match any single character
-that\(cqs not a newline, you might use
+matches any character, including newlines; to match any character except
+newlines, you might use
 .BR \(ti\(rsn .
-To match patters like \(oqnumbers separated by commas\(cq you might use
-intercalation:
+To match patters like \(oqnumbers
+.I separated by
+commas\(cq you might use intercalation:
 .B (\(rsd+)*!,
-(redundant parentheses added for clarity). To match patterns like
-\(oqidentifiers which are not keywords\(cq you might use intersection and
+(redundant parentheses for clarity). To match patterns like \(oqidentifiers
+.I which are not
+keywords\(cq you might use intersection and
 complementation:
-.B \(rsm*\~&\~!(if|else|for)
-(insignificant whitespace added for clarity).
+.B \(rsa\(rsm*\~&\~!(if|do|for)
+(insignificant whitespace for clarity).
 .\" don't use title case for .SS
 .SS Supported syntax
 .TP

@@ -6,11 +6,11 @@
 
 Matching is exact by default; for partial matching, surround a pattern with `%`s. The metacharacter `%` is a shorthand for `.*`.
 
-Whitespace is largely ignored; to match a whitespace character, use an escape like `\ ` or `\n`. All metacharacters, `\‐.~[]<>%{}*+?:|&=!( )`, must be escaped to be matched literally, even inside character classes.
+Whitespace is largely ignored; to match a whitespace character, use an escape like `\ ` or `\n`. All metacharacters, `\‑.~[]<>%{}*+?:|&=!( )`, must be escaped to be matched literally, even inside character classes.
 
-Character ranges can appear outside character classes. For example, `0‐9+` matches a non-empty sequence of digits. Character classes are complemented by prefixing the opening bracket with `~`. For example, `~[abc]` matches any single character that’s not `a` or `b` or `c`. Single characters and character ranges can be complemented as well. For example, `~\n*` matches a sequence of non-newline characters and `[aeiou ~a‐z]` matches any single character that’s not a lowercase consonant (insignificant whitespace added for clarity).
+Character ranges can appear outside character classes. For example, `0‑9+` matches a non-empty sequence of digits. Character classes are complemented by prefixing the opening bracket with `~`. For example, `~[abc]` matches any character except `a` or `b` or `c`. Single characters and character ranges can be complemented as well. For example, `~\n*` matches a sequence of non-newline characters and `[aeiou ~a‑z]` matches any character except lowercase consonants (insignificant whitespace for clarity).
 
-To match “word” characters (alphanumeric characters plus the underscore), you might use `[\m_]`. The metacharacter `.` matches any character, including newlines; to match any single character that’s not a newline, you might use `~\n`. To match patters like _numbers separated by commas_ you might use intercalation: `(\d+)*!,` (redundant parentheses added for clarity). To match patterns like _identifiers which are not keywords_ you might use intersection and complementation: `\m* & !(if|else|for)` (insignificant whitespace added for clarity).
+To match “word” characters (alphanumeric characters plus the underscore), you might use `[\m_]`. The metacharacter `.` matches any character, including newlines; to match any character except newlines, you might use `~\n`. To match patters like ‘numbers _separated by_ commas’ you might use intercalation: `(\d+)*!,` (redundant parentheses for clarity). To match patterns like ‘identifiers _which are not_ keywords’ you might use intersection and complementation: `\a\m* & !(if|do|for)` (insignificant whitespace for clarity).
 
 ## Supported Syntax
 
@@ -21,7 +21,7 @@ To match “word” characters (alphanumeric characters plus the underscore), yo
 | Simple Escape           | `\r`       | Symbol associated with the simple escape `\r` (see below) | `symbol`                     |
 | Hexadecimal Escape      | `\x41`     | Symbol with character code `0x41`                         | `symbol`                     |
 | Symbol Promotion        | any symbol | Singleton set containing the symbol                       | `symbol -> symset`           |
-| Character Range         | `a‐z`      | Set of all characters from `a` to `z` inclusively         | `(symbol, symbol) -> symset` |
+| Character Range         | `a‑z`      | Set of all characters from `a` to `z` inclusively         | `(symbol, symbol) -> symset` |
 | Symset Wildcard         | `.`        | Set of all characters                                     | `symset`                     |
 | Shorthand               | `\d`       | Set of characters in the shorthand `\d` (see below)       | `symset`                     |
 | Symset Complement       | `~u`       | Set of all characters not in `u`                          | `symset -> symset`           |
@@ -55,7 +55,7 @@ To match “word” characters (alphanumeric characters plus the underscore), yo
 | Complement              | `!r`       | Words not in `r`                                          | `regex -> regex`             |
 | Grouping                | `(r)`      | Words in the subexpression `r`                            | `regex -> regex`             |
 
-Literal characters work for any printable character that’s not a metacharacter. Metacharacter escapes work for any metacharacter, `\‐.~[]<>%{}*+?:|&=!( )`. Hexadecimal escapes take exactly two digits. Character ranges support wraparound; for example, `z‐a` means `~b‐y`. Intercalation and dual intercalation work for any quantifier, `{}*+?`. At most one complement may be applied per grouping level, and at most one symset complement may be applied per symset union/intersection level.
+Literal characters work for any printable character that’s not a metacharacter. Metacharacter escapes work for any metacharacter, `\‑.~[]<>%{}*+?:|&=!( )`. Hexadecimal escapes take exactly two digits. Character ranges support wraparound; for example, `z‑a` means `~b‑y`. Intercalation and dual intercalation work for any quantifier, `{}*+?`. At most one complement may be applied per grouping level, and at most one symset complement may be applied per symset union/intersection level.
 
 An _n‑factoring_ of a word is an n‑tuple of strings whose concatenation is that word. The empty word has a unique 0‑factoring, namely the 0‑tuple; no other word has 0‑factorings.
 
@@ -93,16 +93,16 @@ In decreasing order, and otherwise right associative:
 
 | Shorthand   | Definition              | Equivalents         | libc Analogue    |
 | ----------- | ----------------------- | ------------------- | ---------------- |
-| `\m`, `~\M` | `[0‐9A‐Za‐z]`           | `[\d\a]`, `<\g\Q>`  | `isalnum` (C89)  |
-| `\a`, `~\A` | `[A‐Za‐z]`              | `[\u\l]`, `<\m\D>`  | `isalpha` (C89)  |
-| `\k`, `~\K` | `[\t\ ]`                | `<\s~\n‐\r>`        | `isblank` (C99)  |
-| `\c`, `~\C` | `[\x00‐\x1f\x7f]`       | `<\z\P>`            | `iscntrl` (C89)  |
-| `\d`, `~\D` | `0‐9`                   | `<\m\A>`            | `isdigit` (C89)  |
-| `\g`, `~\G` | `\!‐\~`                 | `[\q\m]`, `<\p~\ >` | `isgraph` (C89)  |
-| `\l`, `~\L` | `a‐z`                   | `<\a\U>`            | `islower` (C89)  |
-| `\p`, `~\P` | `\ ‐\~`                 | `[\g\ ]`, `<\z\C>`  | `isprint` (C89)  |
-| `\q`, `~\Q` | ``[\!‐/\:‐@\[‐`\{‐\~]`` | `<\g\M>`            | `ispunct` (C89)  |
-| `\s`, `~\S` | `[\t‐\r\ ]`             | `[\k\n‐\r]`         | `isspace` (C89)  |
-| `\u`, `~\U` | `A‐Z`                   | `<\a\L>`            | `isupper` (C89)  |
-| `\h`, `~\H` | `[0‐9A‐Fa‐f]`           |                     | `isxdigit` (C89) |
-| `\z`, `~\Z` | `\x00‐\x7f`             | `[\c\p]`            | `isascii` (BSD)  |
+| `\m`, `~\M` | `[0‑9A‑Za‑z]`           | `[\d\a]`, `<\g\Q>`  | `isalnum` (C89)  |
+| `\a`, `~\A` | `[A‑Za‑z]`              | `[\u\l]`, `<\m\D>`  | `isalpha` (C89)  |
+| `\k`, `~\K` | `[\t\ ]`                | `<\s~\n‑\r>`        | `isblank` (C99)  |
+| `\c`, `~\C` | `[\x00‑\x1f\x7f]`       | `<\z\P>`            | `iscntrl` (C89)  |
+| `\d`, `~\D` | `0‑9`                   | `<\m\A>`            | `isdigit` (C89)  |
+| `\g`, `~\G` | `\!‑\~`                 | `[\q\m]`, `<\p~\ >` | `isgraph` (C89)  |
+| `\l`, `~\L` | `a‑z`                   | `<\a\U>`            | `islower` (C89)  |
+| `\p`, `~\P` | `\ ‑\~`                 | `[\g\ ]`, `<\z\C>`  | `isprint` (C89)  |
+| `\q`, `~\Q` | ``[\!‑/\:‑@\[‑`\{‑\~]`` | `<\g\M>`            | `ispunct` (C89)  |
+| `\s`, `~\S` | `[\t‑\r\ ]`             | `[\k\n‑\r]`         | `isspace` (C89)  |
+| `\u`, `~\U` | `A‑Z`                   | `<\a\L>`            | `isupper` (C89)  |
+| `\h`, `~\H` | `[0‑9A‑Fa‑f]`           |                     | `isxdigit` (C89) |
+| `\z`, `~\Z` | `\x00‑\x7f`             | `[\c\p]`            | `isascii` (BSD)  |
