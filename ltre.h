@@ -38,7 +38,7 @@ int dfa_get_size(struct dstate *dfa);
 uint8_t *dfa_serialize(struct dstate *dfa, size_t *size);
 struct dstate *dfa_deserialize(uint8_t *image, size_t *size);
 
-void dfa_optimize(struct dstate *dfa);
+void dfa_mark(struct dstate *dfa);
 void dfa_minimize(struct dstate *dfa);
 bool dfa_equivalent(struct dstate *dfa1, struct dstate *dfa2);
 

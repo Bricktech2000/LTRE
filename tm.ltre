@@ -13,4 +13,4 @@
   0c1.{7}0h1| 1c1.{7}1h1| ( c,1: 1,N,h ){}
 ):[]
 
-( vim:se ft=ltre: ){}
+( vim:se tw=80 ft=ltre: ){}

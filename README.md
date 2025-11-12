@@ -7,7 +7,7 @@ _Finite automaton regular expression engine_
 LTRE is a regular expression library written in C99 that has no dependencies but the C standard library. It compiles patterns down to minimal DFAs for linear-time matching and provides facilities for manipulating regular expressions, for lazily constructing DFAs and for decompiling DFAs back into regular expressions.
 
 ```
-                  regex_ignorecase _ regex_reverse  dfa_optimize _
+                  regex_ignorecase _ regex_reverse      dfa_mark _
               regex_differentiate | | regex_cmp    dfa_minimize | | dfa_equivalent
                                   | V                           | V
 (pattern)-------ltre_parse----->(regex)------ltre_compile----->(dfa)--->ltre_serialize--->(image)
@@ -41,6 +41,7 @@ bin/ltrep -h # displays help
 man -l ltrep.1 # displays man page
 bin/ltrep -Hnko '"(~[\\"]|\\.)*"' ltrep.c ltre.c
 bin/ltrep -bz '[\p\s]{4,}' bin/ltrep | tr '\0\n' '\n\0'
+bin/ltrep -1l "$(cat yara.ltre)" bin/* # bin/ltrep
 ```
 
 To build and run the regex complementation tool:

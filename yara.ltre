@@ -1,0 +1,27 @@
+( YARA is a pattern language that helps identify and classify malware samples.
+| below is an example YARA rule that should detect the LTREP binary (pardon the
+| backslashes), followed by its transcription to LTRE syntax.
+|
+| rule ltrep \{
+|   strings:
+|     $elf_header = "\x7fELF"
+|     $quad_nul = \{ 00 00 00 00 \}
+|     $ltrep_lower = "ltrep" fullword
+|     $ltrep_upper = "LTREP" fullword
+|     $parse_args = "\x00parse_args\x00"
+|     $ltre_ = "\x00ltre_"
+|   condition:
+|     $elf_header at 0 and
+|     $quad_nul at filesize \- 4 and
+|     (#ltrep_lower + #ltrep_upper \>= 4 or
+|     @parse_args < @ltre_ and #ltre_ >= 4)
+| \}
+|
+){}
+
+\x7fELF%&
+%\x00{4}&
+%{5}!(\Mltrep\M|\MLTREP\M)|
+%\x00parse_args\x00%{5}!(\x00ltre_)
+
+( vim:se tw=80 ft=ltre: ){}

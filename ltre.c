@@ -946,7 +946,7 @@ struct dstate *dfa_dump(struct dstate *dfa) {
       printf("  %d --", ds1->id);
       for (char *fmt = symset_fmt(transitions); *fmt; fmt++)
         // avoid breaking Mermaid
-        printf(strchr("\\\"#&{}()xo=- ", *fmt) ? "#%hhu;" : "%c", *fmt);
+        printf(strchr("\\\"#&{}()xo=- ~*_`", *fmt) ? "#%hhu;" : "%c", *fmt);
       printf("--> %d\n", ds2->id);
     }
   }
@@ -1035,7 +1035,7 @@ struct dstate *dfa_deserialize(uint8_t *image, size_t *size) {
   return *dstates;
 }
 
-void dfa_optimize(struct dstate *dfa) {
+void dfa_mark(struct dstate *dfa) {
   // mark "terminating" states. calling `dfa_minimize` before or after calling
   // this function would be redundant. modifies `dfa` in-place
 
@@ -1053,15 +1053,15 @@ void dfa_optimize(struct dstate *dfa) {
         for (int chr = 0; chr < 256; chr++)
           if (dstate->accepting != dstate->transitions[chr]->accepting ||
               !dstate->transitions[chr]->terminating)
-            done = dstate->terminating = false;
+            dstate->terminating = false, done = false;
 
   // dfa_dump(dfa);
 }
 
 void dfa_minimize(struct dstate *dfa) {
   // minimize `dfa` and mark "terminating" states. minimal DFAs are unique up to
-  // renumbering. calling `dfa_optimize` before or after calling this function
-  // would be redundant
+  // renumbering. calling `dfa_mark` before or after calling this function would
+  // be redundant
 
   int dfa_size = dfa_get_size(dfa);
   struct dstate **dstates =
@@ -1099,10 +1099,8 @@ void dfa_minimize(struct dstate *dfa) {
               // `ds1` and `ds2` have not been marked distinguishable so far, so
               // the 'were both states assumed indistinguishable' bit is covered
               if (ARE_DIS(dstates[id1]->transitions[chr]->id,
-                          dstates[id2]->transitions[chr]->id)) {
-                MAKE_DIS(id1, id2), done = false;
-                break;
-              }
+                          dstates[id2]->transitions[chr]->id))
+                MAKE_DIS(id1, id2), done = false, chr = 256;
 
   // minimize the DFA by merging indistinguishable states. no need to prune
   // unreachable states because the construction used by `ltre_determinize`
@@ -1483,10 +1481,18 @@ next_quant:
     if (*error)
       return regex_decref(atom), NULL;
 
+    // normally we desugar r{...}!s into r(sr){...} under the assumption that
+    // the separator is likely easier to recognize than the atom. but when the
+    // separator is nullable and the atom isn't, we desugar into (rs){...}r
+    // instead, so that when `regex_differentiate` factors out an iteration
+    // from the quantifier it can fail early and cleanly
+    bool swap = sep->nullable && !atom->nullable;
     struct regex *sep_atom = regex_repeat(
-        regex_concat(REGEXES(sep, regex_incref(atom))), lower - (lower != 0),
-        upper - (upper != 0 && upper != UINT_MAX));
-    atom = regex_concat(REGEXES(atom, sep_atom));
+        swap ? regex_concat(REGEXES(regex_incref(atom), sep))
+             : regex_concat(REGEXES(sep, regex_incref(atom))),
+        lower - (lower != 0), upper - (upper != 0 && upper != UINT_MAX));
+    atom = swap ? regex_concat(REGEXES(sep_atom, atom))
+                : regex_concat(REGEXES(atom, sep_atom));
     lower = lower != 0, upper = upper != 0;
   }
 
@@ -1652,8 +1658,7 @@ bool ltre_matches_lazy(struct dstate **dfap, uint8_t *input) {
 
 struct dstate *ltre_compile(struct regex *regex) {
   // fully compile DFA. determinization followed by minimization. calling
-  // `dfa_optimize` or `dfa_minimize` after calling this function would
-  // be redundant
+  // `dfa_mark` or `dfa_minimize` after calling this function would be redundant
   struct dstate *dfa = ltre_determinize(regex);
   return dfa_minimize(dfa), dfa;
 }

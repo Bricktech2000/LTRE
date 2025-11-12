@@ -16,7 +16,7 @@ struct dstate {
   bool accepting, terminating;
 };
 
-char *opts = "v pxo isS FEHhnNkKb Ttc l L 0 zZq ";
+char *opts = "v pxo isS FEHhnNkKb Ttc l L 0 zZ1 q ";
 struct args {
   struct {
     bool invert;  // -v
@@ -34,7 +34,8 @@ struct args {
     bool list;    // -l
     bool nlist;   // -L
     bool nulname; // -0
-    bool nuldata; // -z/-Z
+    bool nulline; // -z/-Z
+    bool oneline; // -1
     bool quiet;   // -q
   } opts;
   char *pattern; // <pattern>
@@ -43,22 +44,22 @@ struct args {
 
 enum { EXIT_MATCH, EXIT_NOMATCH, EXIT_ERROR };
 
-// the fundamental problem with a --multiline mode is quoting: in the output
-// stream, how do you communicate that one match ends and the next one begins?
-// let's take a closer look at line terminators (as in, \n when -Z and \0 when
-// -z). with -x, line terminators terminate lines, each line is a word (a
-// formal-language-theory word), and we output matching words. -p is the same
-// but the pattern is first surrounded by a pair of wildcards. but for -o, there
-// are two equivalent perspectives:
+// the fundamental problem with -1 is quoting: in the output stream, how do you
+// communicate that one match ends and the next one begins? let's take a closer
+// look at line terminators (as in, \n when -Z and \0 when -z). with -x, line
+// terminators terminate lines, each line is a word (a formal-language-theory
+// word), and we output matching words. -p is the same but the pattern is first
+// surrounded by a pair of wildcards. but for -o, there are two equivalent
+// perspectives:
 //  1. the input stream is a sequence of lines, line terminators terminate each
 //     such line, each line is a string, and we output the substrings that are
 //     matching words.
 //  2. the input stream is a homogeneous blob of data, line terminators are
 //     sentinel bytes, and the user asks that any match containig such sentinels
 //     be ignored so we can use them to delineate matches in the output stream.
-// perspective 2 with line terminator \0 is our multiline mode. matches that
-// contain \0 bytes are ignored, but it must be so because \0 bytes are what's
-// used in the output to delineate matches. for reporting matches that contain
+// perspective 2 gives us a -1 with quoting. matches that contain \0 bytes (\n
+// bytes) are ignored, but it must be so because \0 bytes (\n bytes) are what's
+// used in the output to delineate matches. for quoting matches that contain
 // both \n and \0 bytes, you might use tr(1).
 
 // keep in sync with ltrep.1
@@ -88,6 +89,7 @@ enum { EXIT_MATCH, EXIT_NOMATCH, EXIT_ERROR };
   "  -L     Only print a list of files containing no matches.\n"               \
   "  -0     Terminate all file names with \\0, not : or \\n.\n"                \
   "  -z/-Z  Use line terminator \\0 for input and output data.\n"              \
+  "  -1     Use no line terminator for input and output data.\n"               \
   "  -q     Produce no output and prioritize exit status 0.\n"
 #define STATUS                                                                 \
   "Exit status is 2 if errors occurred, else 0 if\n"                           \
@@ -107,6 +109,7 @@ enum { EXIT_MATCH, EXIT_NOMATCH, EXIT_ERROR };
   "\n" OPTS "\n"                                                               \
   "Options '-i/-s' and '-S' override eachother.\n"                             \
   "Options '-p/-x' and '-o' override eachother.\n"                             \
+  "Options '-z/-Z' and '-1' override eachother.\n"                             \
   "Matches may overlap so when '-o' is supplied the\n"                         \
   "output size may be quadratic in the input size.\n"                          \
   "\n" STATUS ""
@@ -133,6 +136,7 @@ struct args parse_args(char **argv) {
 
       args.opts.smart &= *opt != 'i' && *opt != 's';   // '-i/-s' override '-S'
       args.opts.onlymat &= *opt != 'p' && *opt != 'x'; // '-p/-x' override '-o'
+      args.opts.oneline &= *opt != 'z' && *opt != 'Z'; // '-z/-Z' override '-1'
     }
   }
 
@@ -144,6 +148,7 @@ struct args parse_args(char **argv) {
 
   args.opts.partial |= args.opts.onlymat; // '-o' overrides '-p/-x'
   args.opts.ignore |= args.opts.smart;    // '-S' overrides '-i/-s'
+  args.opts.nulline |= args.opts.oneline; // '-1' overrides '-z/-Z'
 
   // not trying to be clever here. /\D/ and /\x6A/, for example, are treated as
   // uppercase and cause matches to become case sensitive. probably not much of
@@ -232,7 +237,7 @@ int main(int argc, char **argv) {
     if (args.opts.inittab)                                                     \
       putchar('\t');                                                           \
     fwrite(begin, sizeof(*begin), end - begin, stdout);                        \
-    putchar(args.opts.nuldata ? '\0' : '\n');                                  \
+    args.opts.oneline ? 0 : putchar(args.opts.nulline ? '\0' : '\n');          \
   } while (0)
 
 #define OUTPUT_LINE /* args.opts, file, lineno, lineoff, line, len, dfa */     \
@@ -290,11 +295,11 @@ int main(int argc, char **argv) {
   } while (0)
 
   int exit_status = EXIT_NOMATCH;
-  uint8_t ieol = args.opts.nuldata ? '\0' : '\n';
+  int ieol = args.opts.oneline ? EOF : args.opts.nulline ? '\0' : '\n';
 
   for (char **file = args.files; *file; file++) {
     if (args.opts.quiet && exit_status == EXIT_MATCH)
-      break; // no need to process more files
+      break; // at least one file has matches, no need to process more files
 
     FILE *fp = NULL;
     if (strcmp(*file, "-") == 0)
@@ -326,12 +331,14 @@ int main(int argc, char **argv) {
           (p = memchr(p, ieol, data + size - p)) || (p = data + size);
         size_t len = p - line;
 
+        if (!args.opts.oneline && p == data + size && len == 0)
+          break; // ignore partial line if it's empty
         if (dstate->accepting && ++count) {
           OUTPUT_LINE;
           if (args.opts.quiet || exit_status != EXIT_ERROR)
             exit_status = EXIT_MATCH; // without '-q', EXIT_ERROR takes priority
           if (args.opts.list && !args.opts.count || args.opts.quiet)
-            break; // no need to process more lines
+            break; // file has at least one match, no need to process more lines
         }
         lineno++, lineoff += len + 1;
       }
@@ -362,15 +369,15 @@ int main(int argc, char **argv) {
       }
       if (ferror(fp) ? free(line), fclose(fp), 1 : 0)
         goto perror_continue;
-      if (feof(fp) && len == 0)
-        break; // ignore partial line if it's empty
 
+      if (!args.opts.oneline && feof(fp) && len == 0)
+        break; // ignore partial line if it's empty
       if (dstate->accepting && ++count) {
         OUTPUT_LINE;
         if (args.opts.quiet || exit_status != EXIT_ERROR)
           exit_status = EXIT_MATCH; // without '-q', EXIT_ERROR takes priority
         if (args.opts.list && !args.opts.count || args.opts.quiet)
-          break; // no need to process more lines
+          break; // file has at least one match, no need to process more lines
       }
       lineno++, lineoff += len + 1;
     }

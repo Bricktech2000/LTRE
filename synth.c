@@ -49,7 +49,7 @@ int main(int argc, char **argv) {
         exit(EXIT_FAILURE);
 
   struct dstate *dfa = ltre_determinize(regex);
-  dfa_optimize(dfa); // mark terminating states. faster than `dfa_minimize`
+  dfa_mark(dfa); // mark terminating states. faster than `dfa_minimize`
 
   // while (1)
   //   puts(run(dfa) ? "\naccept" : "\nreject");

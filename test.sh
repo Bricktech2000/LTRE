@@ -132,40 +132,51 @@ echo $? 125 >> test.act; echo -e 'a' | bin/ltrep -q 'b' - >> test.act 2> /dev/nu
 echo $? 126 >> test.act; echo -e 'a' | bin/ltrep -q 'b' err >> test.act 2> /dev/null
 echo $? 127 >> test.act; echo -e 'a' | bin/ltrep -q 'b' - err >> test.act 2> /dev/null
 echo $? 128 >> test.act; echo -e 'a' | bin/ltrep -q 'b' err - >> test.act 2> /dev/null
-#else   129 NUL bytes, -z
-echo $? 130 >> test.act; echo -en '\0\n\n'     | bin/ltrep -c '%' >> test.act
-echo $? 131 >> test.act; echo -en 'a\n\0b\n'   | bin/ltrep -c '%' >> test.act
-echo $? 132 >> test.act; echo -en 'a\n\0\nb\n' | bin/ltrep -c '%' >> test.act
-echo $? 133 >> test.act; echo -en 'a\n\0b'     | bin/ltrep -c '%' >> test.act
-echo $? 134 >> test.act; echo -en '\n\0\0'     | bin/ltrep -cz '%' >> test.act
-echo $? 135 >> test.act; echo -en 'a\0\nb\0'   | bin/ltrep -cz '%' >> test.act
-echo $? 136 >> test.act; echo -en 'a\0\n\0b\0' | bin/ltrep -cz '%' >> test.act
-echo $? 137 >> test.act; echo -en 'a\0\nb'     | bin/ltrep -cz '%' >> test.act
-#else   138 flag overrides
-echo $? 139 >> test.act; echo -e 'a' | bin/ltrep -px '' >> test.act
-echo $? 140 >> test.act; echo -e 'a' | bin/ltrep -xp '' >> test.act
-echo $? 141 >> test.act; echo -e 'a' | bin/ltrep -ox '' >> test.act
-echo $? 142 >> test.act; echo -e 'a' | bin/ltrep -xo '' >> test.act
-echo $? 143 >> test.act; echo -e 'a' | bin/ltrep -op '' >> test.act
-echo $? 144 >> test.act; echo -e 'a' | bin/ltrep -po '' >> test.act
-echo $? 145 >> test.act; echo -e 'A' | bin/ltrep -is 'a' >> test.act
-echo $? 146 >> test.act; echo -e 'A' | bin/ltrep -si 'a' >> test.act
-echo $? 147 >> test.act; echo -e 'A' | bin/ltrep -Ss 'a' >> test.act
-echo $? 148 >> test.act; echo -e 'A' | bin/ltrep -sS 'a' >> test.act
-echo $? 149 >> test.act; echo -e 'a' | bin/ltrep -Si 'A' >> test.act
-echo $? 150 >> test.act; echo -e 'a' | bin/ltrep -iS 'A' >> test.act
-echo $? 151 >> test.act; echo -e 'a' | bin/ltrep -FE '.' >> test.act
-echo $? 152 >> test.act; echo -e 'a' | bin/ltrep -EF '.' >> test.act
-echo $? 153 >> test.act; echo -e 'a' | bin/ltrep -Hh 'a' >> test.act
-echo $? 154 >> test.act; echo -e 'a' | bin/ltrep -hH 'a' >> test.act
-echo $? 155 >> test.act; echo -e 'a' | bin/ltrep -kK 'a' >> test.act
-echo $? 156 >> test.act; echo -e 'a' | bin/ltrep -Kk 'a' >> test.act
-echo $? 157 >> test.act; echo -e 'a' | bin/ltrep -Tt 'a' >> test.act
-echo $? 158 >> test.act; echo -e 'a' | bin/ltrep -tT 'a' >> test.act
-echo $? 159 >> test.act; echo -e 'a' | bin/ltrep -nN 'a' >> test.act
-echo $? 160 >> test.act; echo -e 'a' | bin/ltrep -Nn 'a' >> test.act
-echo $? 161 >> test.act; echo -e 'a' | bin/ltrep -zZ 'a' >> test.act
-echo $? 162 >> test.act; echo -e 'a' | bin/ltrep -Zz 'a' >> test.act
+#else   129 NUL bytes, -z, -1
+echo $? 130 >> test.act; echo -en ''           | bin/ltrep -c '%' >> test.act
+echo $? 131 >> test.act; echo -en '\0\n\n'     | bin/ltrep -c '%' >> test.act
+echo $? 132 >> test.act; echo -en 'a\n\0b\n'   | bin/ltrep -c '%' >> test.act
+echo $? 133 >> test.act; echo -en 'a\n\0\nb\n' | bin/ltrep -c '%' >> test.act
+echo $? 134 >> test.act; echo -en 'a\n\0b'     | bin/ltrep -c '%' >> test.act
+echo $? 135 >> test.act; echo -en ''           | bin/ltrep -cz '%' >> test.act
+echo $? 136 >> test.act; echo -en '\n\0\0'     | bin/ltrep -cz '%' >> test.act
+echo $? 137 >> test.act; echo -en 'a\0\nb\0'   | bin/ltrep -cz '%' >> test.act
+echo $? 138 >> test.act; echo -en 'a\0\n\0b\0' | bin/ltrep -cz '%' >> test.act
+echo $? 139 >> test.act; echo -en 'a\0\nb'     | bin/ltrep -cz '%' >> test.act
+echo $? 140 >> test.act; echo -en ''           | bin/ltrep -c1 '%' >> test.act
+echo $? 141 >> test.act; echo -en '\0\n\n'     | bin/ltrep -c1 '%' >> test.act
+echo $? 142 >> test.act; echo -en 'a\n\0b\n'   | bin/ltrep -c1 '%' >> test.act
+echo $? 143 >> test.act; echo -en 'a\n\0\nb\n' | bin/ltrep -c1 '%' >> test.act
+echo $? 144 >> test.act; echo -en 'a\n\0b'     | bin/ltrep -c1 '%' >> test.act
+#else   145 flag overrides
+echo $? 146 >> test.act; echo -e 'a'  | bin/ltrep -px '' >> test.act
+echo $? 147 >> test.act; echo -e 'a'  | bin/ltrep -xp '' >> test.act
+echo $? 148 >> test.act; echo -e 'a'  | bin/ltrep -ox '' >> test.act
+echo $? 149 >> test.act; echo -e 'a'  | bin/ltrep -xo '' >> test.act
+echo $? 150 >> test.act; echo -e 'a'  | bin/ltrep -op '' >> test.act
+echo $? 151 >> test.act; echo -e 'a'  | bin/ltrep -po '' >> test.act
+echo $? 152 >> test.act; echo -e 'A'  | bin/ltrep -is 'a' >> test.act
+echo $? 153 >> test.act; echo -e 'A'  | bin/ltrep -si 'a' >> test.act
+echo $? 154 >> test.act; echo -e 'A'  | bin/ltrep -Ss 'a' >> test.act
+echo $? 155 >> test.act; echo -e 'A'  | bin/ltrep -sS 'a' >> test.act
+echo $? 156 >> test.act; echo -e 'a'  | bin/ltrep -Si 'A' >> test.act
+echo $? 157 >> test.act; echo -e 'a'  | bin/ltrep -iS 'A' >> test.act
+echo $? 158 >> test.act; echo -e 'a'  | bin/ltrep -FE '.' >> test.act
+echo $? 159 >> test.act; echo -e 'a'  | bin/ltrep -EF '.' >> test.act
+echo $? 160 >> test.act; echo -e 'a'  | bin/ltrep -Hh 'a' >> test.act
+echo $? 161 >> test.act; echo -e 'a'  | bin/ltrep -hH 'a' >> test.act
+echo $? 162 >> test.act; echo -e 'a'  | bin/ltrep -kK 'a' >> test.act
+echo $? 163 >> test.act; echo -e 'a'  | bin/ltrep -Kk 'a' >> test.act
+echo $? 164 >> test.act; echo -e 'a'  | bin/ltrep -Tt 'a' >> test.act
+echo $? 165 >> test.act; echo -e 'a'  | bin/ltrep -tT 'a' >> test.act
+echo $? 166 >> test.act; echo -e 'a'  | bin/ltrep -nN 'a' >> test.act
+echo $? 167 >> test.act; echo -e 'a'  | bin/ltrep -Nn 'a' >> test.act
+echo $? 168 >> test.act; echo -e '\0' | bin/ltrep -zZ '.' >> test.act
+echo $? 169 >> test.act; echo -e '\0' | bin/ltrep -Zz '.' >> test.act
+echo $? 170 >> test.act; echo -e '\0' | bin/ltrep -1Z '.' >> test.act
+echo $? 171 >> test.act; echo -e '\0' | bin/ltrep -Z1 '.' >> test.act
+echo $? 172 >> test.act; echo -e '\0' | bin/ltrep -1z '.' >> test.act
+echo $? 173 >> test.act; echo -e '\0' | bin/ltrep -z1 '.' >> test.act
 
 diff --text test.exp test.act
 # cp test.act test.exp # for updating the test suite
