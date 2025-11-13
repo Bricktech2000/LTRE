@@ -17,7 +17,7 @@ LTRE is a regular expression library written in C99 that has no dependencies but
                            ltre_matches_lazy                ltre_matches
 ```
 
-For sample regular expressions, see the test suite [test.c](test.c). For a more realistic use-case, see the small command-line search tool [ltrep.c](ltrep.c). For demos of of DFA decompilation and equivalence, see the regex complementation tool [compl.c](compl.c) and the regex equivalence tool [equiv.c](equiv.c). For generating matching strings from a regular expression, see the string synthesis tool [synth.c](synth.c).
+For sample regular expressions, see the test suite [test.c](test.c). For a more realistic use-case, see the small command-line search tool [ltrep/ltrep.c](ltrep/ltrep.c). For demos of of DFA decompilation and equivalence, see the regex complementation tool [examples/compl.c](examples/compl.c) and the regex equivalence tool [examples/equiv.c](examples/equiv.c). For generating matching strings from a regular expression, see the string synthesis tool [examples/synth.c](examples/synth.c).
 
 See [patterns.md](patterns.md) and [grammar.bnf](grammar.bnf) for documentation on regular expression strings.
 
@@ -32,16 +32,16 @@ bin/test # should have no output
 
 To build and run the command-line search tool:
 
-<!-- keep in sync with ltrep.1 -->
+<!-- keep in sync with ltrep/ltrep.1 -->
 
 ```sh
 make bin/ltrep
-sh test.sh # should have no output
+sh -c 'cd ltrep/ && sh test.sh ../bin/ltrep' # no output
 bin/ltrep -h # displays help
-man -l ltrep.1 # displays man page
-bin/ltrep -Hnko '"(~[\\"]|\\.)*"' ltrep.c ltre.c
+man -l ltrep/ltrep.1 # displays man page
+bin/ltrep -Hnko '"(~[\\"]|\\.)*"' ltrep/ltrep.c ltre.c
 bin/ltrep -bz '[\p\s]{4,}' bin/ltrep | tr '\0\n' '\n\0'
-bin/ltrep -1l "$(cat yara.ltre)" bin/* # bin/ltrep
+bin/ltrep -1l "$(cat ltrep/yara.ltre)" bin/* # bin/ltrep
 ```
 
 To build and run the regex complementation tool:
@@ -66,6 +66,6 @@ make bin/synth
 echo '0' | bin/synth '0|1+' # 0
 echo '1' | bin/synth '0|1+' | head -c 256 # 111...
 bin/synth '((0{2}!1){2}!2){2}!3' # 010201030102010
-echo '0000a0000' | bin/synth "$(cat tm.ltre)"
+echo '0000a0000' | bin/synth "$(cat examples/tm.ltre)"
 # use `stty -icanon -echo -nl` for interactive use
 ```

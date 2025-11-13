@@ -3,17 +3,17 @@ CFLAGS=-O2 -Wall -Wextra -Wpedantic -std=c99 -fshort-enums
 
 all: bin/ltrep bin/compl bin/equiv bin/test
 
-bin/ltrep: ltrep.c bin/ltre.o | bin/
-	$(CC) $(CFLAGS) -Wno-parentheses -Wno-unused-value -Wno-unused-parameter $^ -o $@
+bin/ltrep: ltrep/ltrep.c bin/ltre.o | bin/
+	$(CC) $(CFLAGS) -Wno-parentheses -Wno-unused-value -Wno-unused-parameter -I. $^ -o $@
 
-bin/compl: compl.c bin/ltre.o | bin/
-	$(CC) $(CFLAGS) -Wno-parentheses $^ -o $@
+bin/compl: examples/compl.c bin/ltre.o | bin/
+	$(CC) $(CFLAGS) -Wno-parentheses -I. $^ -o $@
 
-bin/equiv: equiv.c bin/ltre.o | bin/
-	$(CC) $(CFLAGS) -Wno-parentheses $^ -o $@
+bin/equiv: examples/equiv.c bin/ltre.o | bin/
+	$(CC) $(CFLAGS) -Wno-parentheses -I. $^ -o $@
 
-bin/synth: synth.c bin/ltre.o | bin/
-	$(CC) $(CFLAGS) -Wno-parentheses $^ -o $@
+bin/synth: examples/synth.c bin/ltre.o | bin/
+	$(CC) $(CFLAGS) -Wno-parentheses -I. $^ -o $@
 
 bin/test: test.c bin/ltre.o | bin/
 	$(CC) $(CFLAGS) -Wno-parentheses -Wno-missing-field-initializers $^ -o $@

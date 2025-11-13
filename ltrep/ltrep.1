@@ -131,7 +131,7 @@ Overrides
 .TP
 .B \-q
 Produce no output and prioritize exit status 0.
-.\" keep in sync with patterns.md
+.\" keep in sync with ../patterns.md
 .SH PATTERNS
 .SS Notes
 .PP
@@ -704,7 +704,7 @@ if errors occurred; else,
 .B 1
 (no lines matched, no errors occurred).
 .nr PD \n(pd
-.\" keep in sync with README.md
+.\" keep in sync with ../README.md
 .SH EXAMPLES
 .PP
 Search for string literals in some C files, handling any escape sequences,
@@ -713,11 +713,11 @@ and print their line and column numbers:
 .in +4n
 .EX
 .RB "$ " "ltrep \-Hnko \(aq\(dq(\(ti[\(rs\(rs\(dq]|\(rs\(rs.)*\(dq\(aq \c"
-.B "ltrep.c ltre.c"
-ltrep.c:1:10:\(dqltre.h\(dq
-ltrep.c:19:14:\(dqv pxo isS FEHhnNkKb Ttc l L 0 zZq \(dq
-ltrep.c:65:13:\(dqLTREP 0.3\(rsn\(dq
-ltrep.c:66:14:\(dqLTREP --- print lines matching a pattern\(rsn\(dq
+.B "ltrep/ltrep.c ltre.c"
+ltrep/ltrep.c:1:10:\(dqltre.h\(dq
+ltrep/ltrep.c:19:14:\(dqv pxo isS FEHhnNkKb Ttc l L 0 zZq \(dq
+ltrep/ltrep.c:65:13:\(dqLTREP 0.3\(rsn\(dq
+ltrep/ltrep.c:66:14:\(dqLTREP --- print lines matching a pattern\(rsn\(dq
 \&...
 .EE
 .in

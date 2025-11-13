@@ -1,4 +1,4 @@
-<!-- keep in sync with ltrep.1 -->
+<!-- keep in sync with ltrep/ltrep.1 -->
 
 # Patterns
 
