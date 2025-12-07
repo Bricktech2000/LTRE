@@ -158,16 +158,14 @@ For example,
 .B \(ti[abc]
 matches any character except
 .BR a " or " b " or " c .
-Single characters and character ranges can be complemented as well. For
-example,
+Single characters and character ranges can be complemented as well. For example,
 .B \(ti\(rsn*
 matches a sequence of non-newline characters and
 .B \%[aeiou\~\(tia\-z]
-matches any character except lowercase consonants (insignificant whitespace
-for clarity).
+matches any character except lowercase consonants (insignificant whitespace for
+clarity).
 .PP
-To match \(lqword\(rq characters (alphanumeric characters plus the
-underscore),
+To match \(lqword\(rq characters (alphanumeric characters plus the underscore),
 you might use
 .BR [\(rsm_] .
 The metacharacter
@@ -181,8 +179,7 @@ commas\(cq you might use intercalation:
 .B (\(rsd+)*!,
 (redundant parentheses for clarity). To match patterns like \(oqidentifiers
 .I which are not
-keywords\(cq you might use intersection and
-complementation:
+keywords\(cq you might use intersection and complementation:
 .B \(rsa\(rsm*\~&\~!(if|do|for)
 (insignificant whitespace for clarity).
 .\" don't use title case for .SS
@@ -267,8 +264,7 @@ Available shorthands are listed further below.
 Set of all characters not in
 .IR u .
 .br
-At most one may be applied per symset union/intersection
-level.
+At most one may be applied per symset union/intersection level.
 .TP
 .BI [ uv\c
 .RB ... ]
@@ -506,8 +502,8 @@ Words in the subexpression
 .IR r .
 .PP
 An \(oq\%n-factoring\(cq of a word is an \%n-tuple of strings whose
-concatenation is that word. The empty word has a unique \%0-factoring,
-namely the \%0-tuple; no other word has \%0-factorings.
+concatenation is that word. The empty word has a unique \%0-factoring, namely
+the \%0-tuple; no other word has \%0-factorings.
 .PP
 Insignificant whitespace can appear anywhere except within escapes, character
 ranges, shorthands, quantifiers, and intercalators.
@@ -707,8 +703,8 @@ if errors occurred; else,
 .\" keep in sync with ../README.md
 .SH EXAMPLES
 .PP
-Search for string literals in some C files, handling any escape sequences,
-and print their line and column numbers:
+Search for string literals in some C files, handling any escape sequences, and
+print their line and column numbers:
 .PP
 .in +4n
 .EX
@@ -741,4 +737,4 @@ and print their offset into the file:
 .EE
 .in
 .
-.\" vim:tw=78:ft=nroff:
+.\" vim:tw=80:ft=nroff:
