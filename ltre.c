@@ -1189,7 +1189,7 @@ bool dfa_equivalent(struct dstate *dfa1, struct dstate *dfa2) {
 // keep in sync with grammar.bnf
 
 static int parse_ws(char **pattern) {
-  while (**pattern && isspace(**pattern))
+  while (isspace(**pattern))
     ++*pattern;
   return 1; // for use within &&
 }

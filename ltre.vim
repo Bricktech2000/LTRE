@@ -6,14 +6,14 @@ syntax match ltreMetaEscape '\\[\\\-.~\[\]<>%{}*+?:|&=!( )]'hs=s+1
 syntax match ltreSymMetaEsc '\\[\\\-.~\[\]<>%{}*+?:|&=!( )]'he=e-1 contained
 syntax match ltreSimpleEscape '\\[bfnrtve]'
 syntax match ltreHexEscape '\\x\x\x'
-syntax match ltreSymsetCompl '\~\_s*\([^\\]\|\\[^x]\|\\x\x\x\)' " moved up for lower priority
-syntax match ltreCharRange '\~\?\_s*\([^\\]\|\\[^x]\|\\x\x\x\)-\([^\\]\|\\[^x]\|\\x\x\x\)'
-syntax match ltreSymsetWild '\~\?\_s*\.'
-syntax match ltreShorthand '\~\?\_s*\\[mMaAkKcCdDgGlLpPqQsSuUhHzZ]'
-syntax region ltreSymsetUnion matchgroup=PreProc start='\~\?\_s*\[' skip='\\.' end='[\]>%{}*+?:|&=!()]'
+syntax match ltreSymsetCompl '\~\_[[:space:]]*\([^\\]\|\\[^x]\|\\x\x\x\)' " moved up for lower priority
+syntax match ltreCharRange '\~\?\_[[:space:]]*\([^\\]\|\\[^x]\|\\x\x\x\)-\([^\\]\|\\[^x]\|\\x\x\x\)'
+syntax match ltreSymsetWild '\~\?\_[[:space:]]*\.'
+syntax match ltreShorthand '\~\?\_[[:space:]]*\\[mMaAkKcCdDgGlLpPqQsSuUhHzZ]'
+syntax region ltreSymsetUnion matchgroup=PreProc start='\~\?\_[[:space:]]*\[' skip='\\.' end='[\]>%{}*+?:|&=!()]'
       \ keepend extend contains=ltreSymMetaEsc,ltreSimpleEscape,ltreHexEscape,ltreCharRange,
       \ ltreSymsetWild,ltreSymsetCompl,ltreShorthand,ltreSymsetUnion,ltreSymsetInter
-syntax region ltreSymsetInter matchgroup=PreProc start='\~\?\_s*<' skip='\\.' end='[\]>%{}*+?:|&=!()]'
+syntax region ltreSymsetInter matchgroup=PreProc start='\~\?\_[[:space:]]*<' skip='\\.' end='[\]>%{}*+?:|&=!()]'
       \ keepend extend contains=ltreSymMetaEsc,ltreSimpleEscape,ltreHexEscape,ltreCharRange,
       \ ltreSymsetWild,ltreSymsetCompl,ltreShorthand,ltreSymsetUnion,ltreSymsetInter
 syntax match ltreWildcard '%'
