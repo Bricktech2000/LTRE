@@ -430,8 +430,22 @@ Words in
 .I r*
 but with
 .I s
-inserted between each
-.IR r .
+between consecutive
+.IR r s.
+.br
+That is,
+.IB r { m+1 , n+1 }! s
+\(ti
+.IB r ( sr ){ m , n }\c
+,
+.IB r {, n+1 }! s
+\(ti
+.IB r ( sr ){, n }|\c
+,
+.IB r {}! s
+\(ti
+.BI ()\c
+\&.
 .br
 Works for any quantifier,
 .BR {}*+? .
@@ -444,8 +458,22 @@ Words in
 .IB r : *
 but with
 .I s
-inserted between each
-.IR r .
+between consecutive
+.IR r s.
+.br
+That is,
+.IB r :{ m+1 , n+1 }! s
+\(ti
+.IB r :( s : r ):{ m , n }\c
+,
+.IB r :{, n+1 }! s
+\(ti
+.IB r :( s : r ):{, n }&!\c
+,
+.IB r :{}! s
+\(ti
+.BI (!)\c
+\&.
 .br
 Works for any quantifier,
 .BR {}*+? .
@@ -508,7 +536,8 @@ the \%0-tuple; no other word has \%0-factorings.
 Insignificant whitespace can appear anywhere except within escapes, character
 ranges, shorthands, quantifiers, and intercalators.
 .PP
-Dual operators are dual with respect to complementation.
+Dual operators are dual with respect to complementation. For example,
+.BR r:s " means " !(!r)(!s) " and " r:* " means " !(!r)* .
 .SS Precedence
 .PP
 In decreasing order, and otherwise right associative:

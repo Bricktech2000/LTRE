@@ -45,8 +45,8 @@ To match “word” characters (alphanumeric characters plus the underscore), yo
 | Dual Kleene Star        | `r:*`      | Words all n‑factorings of which contain some `r`          | `regex -> regex`             |
 | Dual Kleene Plus        | `r:+`      | Words all ≥1‑factorings of which contain some `r`         | `regex -> regex`             |
 | Dual Optional           | `r:?`      | Words all ≤1‑factorings of which contain some `r`         | `regex -> regex`             |
-| Intercalation           | `r*!s`     | Words in `r*` but with `s` inserted between each `r`      | `(regex, regex) -> regex`    |
-| Dual Intercalation      | `r:*!s`    | Words in `r:*` but with `s` inserted between each `r`     | `(regex, regex) -> regex`    |
+| Intercalation           | `r*!s`     | Words in `r*` but with `s` between consecutive `r`s       | `(regex, regex) -> regex`    |
+| Dual Intercalation      | `r:*!s`    | Words in `r:*` but with `s` between consecutive `r`s      | `(regex, regex) -> regex`    |
 | Concatenation           | `rs`       | Words some 2‑factoring of which has head `r` and tail `s` | `(regex, regex) -> regex`    |
 | Dual Concatenation      | `r:s`      | Words all 2‑factorings of which have head `r` or tail `s` | `(regex, regex) -> regex`    |
 | Alternation             | `r\|s`     | Words in `r` or in `s`                                    | `(regex, regex) -> regex`    |
@@ -55,13 +55,13 @@ To match “word” characters (alphanumeric characters plus the underscore), yo
 | Complement              | `!r`       | Words not in `r`                                          | `regex -> regex`             |
 | Grouping                | `(r)`      | Words in the subexpression `r`                            | `regex -> regex`             |
 
-Literal characters work for any printable character that’s not a metacharacter. Metacharacter escapes work for any metacharacter, `\‑.~[]<>%{}*+?:|&=!( )`. Hexadecimal escapes take exactly two digits. Character ranges support wraparound; for example, `z‑a` means `~b‑y`. Intercalation and dual intercalation work for any quantifier, `{}*+?`. At most one complement may be applied per grouping level, and at most one symset complement may be applied per symset union/intersection level.
+Literal characters work for any printable character that’s not a metacharacter. Metacharacter escapes work for any metacharacter, `\‑.~[]<>%{}*+?:|&=!( )`. Hexadecimal escapes take exactly two digits. Character ranges support wraparound; for example, `z‑a` means `~b‑y`. Intercalation may be defined as `r{m+1,n+1}!s` ⊢ `r(sr){m,n}`, `r{,n+1}!s` ⊢ `|r(sr){,n}`, `r{}!s` ⊢ `()`; and dual intercalation may be defined as `r:{m+1,n+1}!s` ⊢ `r:(s:r):{m,n}`, `r:{,n+1}!s` ⊢ `!&r:(s:r):{,n}`, `r:{}!s` ⊢ `(!)`. Intercalation and dual intercalation work for any quantifier, `{}*+?`. At most one complement may be applied per grouping level, and at most one symset complement may be applied per symset union/intersection level.
 
 An _n‑factoring_ of a word is an n‑tuple of strings whose concatenation is that word. The empty word has a unique 0‑factoring, namely the 0‑tuple; no other word has 0‑factorings.
 
 Insignificant whitespace can appear anywhere except within escapes, character ranges, shorthands, quantifiers, and intercalators.
 
-Dual operators are dual with respect to complementation.
+Dual operators are dual with respect to complementation. For example, `r:s` means `!(!r)(!s)` and `r:*` means `!(!r)*` .
 
 ## Precedence
 

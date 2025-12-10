@@ -100,9 +100,9 @@ struct regex {
   // this measure is irrelevant the vast majority of the time because structural
   // sharing is only ever expanded out when regular expressions are stringified
   unsigned size;
-  // repetition bounds for `TYPE_REPEAT`, both inclusive. `upper == UINT_MAX`
-  // means there is no upper bound. for `TYPE_SYMSET`, if `upper == 1` then the
-  // symset is the universal symset
+  // repetition bounds for `TYPE_REPEAT`, both inclusive. `upper == false` means
+  // there is no upper bound, as in, `upper` is unbounded. for `TYPE_SYMSET`, if
+  // `upper == true` then the symset is the universal symset
   unsigned lower, upper;
   // set of symbols for `TYPE_SYMSET`. also used for caching the most recent
   // derivative and a conservative set of characters for which it holds: if
@@ -239,7 +239,7 @@ struct regex *regex_dump(struct regex *regex, int indent) {
   printf("%*s%s", indent, "", types[regex->type]);
 
   if (regex->type == TYPE_REPEAT)
-    printf(" %d,%d", regex->lower, regex->upper); // using '%d' for `UINT_MAX`
+    printf(" %u,%u", regex->lower, regex->upper);
   if (regex->type == TYPE_SYMSET)
     printf(" %s", symset_fmt(regex->symset));
 
@@ -285,17 +285,17 @@ static size_t regex_fmt_len(struct regex *regex, enum regex_type prec) {
   case TYPE_REPEAT:;
     len += regex_fmt_len(*regex->children, TYPE_REPEAT);
 
-    if (regex->lower == 0 && regex->upper == UINT_MAX ||
-        regex->lower == 1 && regex->upper == UINT_MAX ||
+    if (regex->lower == 0 && !regex->upper ||
+        regex->lower == 1 && !regex->upper ||
         regex->lower == 0 && regex->upper == 1)
       len++; // * + ?
     else {
       len++; // {
       if (regex->lower != 0)
         len += snprintf(NULL, 0, "%u", regex->lower);
-      if (regex->lower != regex->upper) {
+      if (!regex->upper || regex->lower != regex->upper) {
         len++; // ,
-        if (regex->upper != UINT_MAX)
+        if (regex->upper)
           len += snprintf(NULL, 0, "%u", regex->upper);
       }
       len++; // }
@@ -346,9 +346,9 @@ static char *regex_fmt(struct regex *regex, char *buf, enum regex_type prec) {
   case TYPE_REPEAT:;
     buf = regex_fmt(*regex->children, buf, TYPE_REPEAT);
 
-    if (regex->lower == 0 && regex->upper == UINT_MAX)
+    if (regex->lower == 0 && !regex->upper)
       *buf++ = '*';
-    else if (regex->lower == 1 && regex->upper == UINT_MAX)
+    else if (regex->lower == 1 && !regex->upper)
       *buf++ = '+';
     else if (regex->lower == 0 && regex->upper == 1)
       *buf++ = '?';
@@ -356,9 +356,9 @@ static char *regex_fmt(struct regex *regex, char *buf, enum regex_type prec) {
       *buf++ = '{';
       if (regex->lower != 0)
         buf += sprintf(buf, "%u", regex->lower);
-      if (regex->lower != regex->upper) {
+      if (!regex->upper || regex->lower != regex->upper) {
         *buf++ = ',';
-        if (regex->upper != UINT_MAX)
+        if (regex->upper)
           buf += sprintf(buf, "%u", regex->upper);
       }
       *buf++ = '}';
@@ -551,8 +551,8 @@ static struct regex *regex_repeat_prev(struct regex *prev, struct regex *child,
                                        unsigned lower, unsigned upper);
 struct regex *regex_repeat(struct regex *child, unsigned lower,
                            unsigned upper) {
-  if (upper == 0)
-    return regex_decref(child), regex_eps(); // r{0} |- ()
+  // careful: `upper == 0` means there is no upper bound. if you need a repeat
+  // of 0, use `regex_eps()` instead.
   if (lower == 1 && upper == 1)
     return child; // r{1} |- r
   if (child == regex_eps())
@@ -569,7 +569,7 @@ struct regex *regex_repeat(struct regex *child, unsigned lower,
       return regex_decref(child), regex_univ(); // (!){,n+1} |- %
     else if (lower == 1)
       return child; // (!){1,n} |- (!)
-  if (child->type == TYPE_SYMSET && child->upper && upper == UINT_MAX)
+  if (child->type == TYPE_SYMSET && child->upper && !upper)
     if (lower == 0)
       return regex_decref(child), regex_univ(); // .* |- %
     else if (lower == 1)
@@ -588,16 +588,14 @@ struct regex *regex_repeat(struct regex *child, unsigned lower,
   // hold for all K in [M, N-1]. when M=N, the statement holds trivially; when
   // (n-m)M+1 >= m, the inequality holds for K=M.
   if (child->type == TYPE_REPEAT &&
-      (upper == lower || child->upper == UINT_MAX ||
+      (upper && upper == lower || !child->upper ||
        (child->upper - child->lower) * lower + 1 >= child->lower)) {
-    bool bounded = upper != UINT_MAX && child->upper != UINT_MAX;
     // don't merge if the resulting bounds would overflow
-    if (child->lower <= UINT_MAX / lower &&
-        (!bounded || child->upper <= UINT_MAX / upper)) {
-      lower = child->lower * lower;
-      upper = bounded ? child->upper * upper : UINT_MAX;
-      struct regex *repeat = regex_repeat_prev(
-          child, regex_incref(*child->children), lower, upper);
+    if ((lower == 0 || child->lower <= UINT_MAX / lower) &&
+        (!upper || child->upper <= UINT_MAX / upper)) {
+      struct regex *repeat =
+          regex_repeat_prev(child, regex_incref(*child->children),
+                            child->lower * lower, child->upper * upper);
       return regex_decref(child), repeat;
     }
   }
@@ -611,7 +609,7 @@ struct regex *regex_repeat(struct regex *child, unsigned lower,
 }
 
 struct regex *regex_symset(symset_t *symset) {
-  bool empty = 1, upper = 1;
+  bool empty = true, upper = true;
   for (int i = 0; i < sizeof(*symset); i++)
     empty &= (*symset)[i] == 0x00, upper &= (*symset)[i] == 0xff;
   if (empty)
@@ -824,13 +822,15 @@ static struct regex *regex_differentiate_ref(struct regex *regex, uint8_t chr) {
     regex->delta = regex_alt_prev(delta, children);
     break;
   case TYPE_REPEAT:
-    if (regex->upper == 0)
-      abort(); // `regex_repeat` constructor should have rewritten r{0} |- ()
-    unsigned lower = regex->lower, upper = regex->upper;
-    lower -= lower != 0, upper -= upper != UINT_MAX;
-    regex->delta = regex_concat(REGEXES(
-        regex_differentiate_ref(*children, chr),
-        regex_repeat_prev(delta, regex_incref(*children), lower, upper)));
+    if (regex->upper == 1)
+      regex->delta = regex_differentiate_ref(*children, chr);
+    else {
+      unsigned lower = regex->lower, upper = regex->upper;
+      regex->delta = regex_concat(REGEXES( //
+          regex_differentiate_ref(*children, chr),
+          regex_repeat_prev(delta, regex_incref(*children),
+                            lower - (lower != 0), upper - !!upper)));
+    }
     break;
   case TYPE_SYMSET:
     regex->delta =
@@ -1426,7 +1426,7 @@ next_quant:
                         : regex_repeat(atom, lower, upper);
 
     lower = (unsigned[]){0, 1, 0}[quant - quants];
-    upper = (unsigned[]){UINT_MAX, UINT_MAX, 1}[quant - quants];
+    upper = (unsigned[]){false, false, 1}[quant - quants];
     compl = dual;
     goto next_quant;
   }
@@ -1437,21 +1437,14 @@ next_quant:
     char *last_pattern = *pattern;
 
     lower = upper = parse_natural(pattern, error);
-    if (lower == UINT_MAX) { // UINT_MAX lower bound is reserved
-      if (!*error)           // may have been set by `parse_natural`
-        *error = "repetition bound overflow";
+    if (*error && lower == UINT_MAX) // overflow condition
       return regex_decref(atom), NULL;
-    } else if (*error)
-      lower = 0, *error = NULL;
+    *error = NULL; // default lower bound to 0
 
     if (**pattern == ',' && ++*pattern) {
       upper = parse_natural(pattern, error);
-      if (upper == UINT_MAX) { // UINT_MAX upper bound means unbounded
-        if (!*error)           // may have been set by `parse_natural`
-          *error = "repetition bound overflow";
+      if (*error && upper == UINT_MAX) // overflow condition
         return regex_decref(atom), NULL;
-      } else if (*error)
-        upper = UINT_MAX, *error = NULL; // mark as unbounded
     }
 
     if (**pattern == '}' && ++*pattern)
@@ -1461,11 +1454,19 @@ next_quant:
       return regex_decref(atom), NULL;
     }
 
-    if (lower > upper) {
-      *pattern = last_pattern - 1; // {
-      *error = "misbounded quantifier";
-      return regex_decref(atom), NULL;
+    if (!*error) { // an upper bound was supplied
+      if (lower > upper) {
+        *pattern = last_pattern - 1; // {
+        *error = "misbounded quantifier";
+        return regex_decref(atom), NULL;
+      }
+
+      // make sure the upper bound is not zero because `upper == 0` means
+      // it is unbounded
+      if (upper == 0)
+        regex_decref(atom), atom = regex_eps(), lower = upper = 1;
     }
+    *error = NULL; // default upper bound to unbounded
 
     compl = dual;
     goto next_quant;
@@ -1474,26 +1475,30 @@ next_quant:
   *pattern -= dual, dual = false; // do not consume ':'
 
   if (**pattern == '!' && ++*pattern && parse_ws(pattern)) {
-    // we want say r:+!s to mean r|r:(!s):r|r:(!s):r:(!s):r|... because that
-    // seems most useful, so when the quantifier is a dual quantifier we don't
-    // complement the separator
     struct regex *sep = parse_factor(pattern, error);
     if (*error)
       return regex_decref(atom), NULL;
 
-    // normally we desugar r{...}!s into r(sr){...} under the assumption that
-    // the separator is likely easier to recognize than the atom. but when the
-    // separator is nullable and the atom isn't, we desugar into (rs){...}r
-    // instead, so that when `regex_differentiate` factors out an iteration
-    // from the quantifier it can fail early and cleanly
-    bool swap = sep->nullable && !atom->nullable;
-    struct regex *sep_atom = regex_repeat(
-        swap ? regex_concat(REGEXES(regex_incref(atom), sep))
-             : regex_concat(REGEXES(sep, regex_incref(atom))),
-        lower - (lower != 0), upper - (upper != 0 && upper != UINT_MAX));
-    atom = swap ? regex_concat(REGEXES(sep_atom, atom))
-                : regex_concat(REGEXES(atom, sep_atom));
-    lower = lower != 0, upper = upper != 0;
+    if (upper == 1)
+      regex_decref(sep);
+    else {
+      // we want say r:+!s to mean r&r:s:r&r:s:r:s:r&..., so we complement the
+      // separator when the quantifier was a dual quantifier.
+      sep = dual ^ compl ? regex_compl(sep) : sep;
+      // normally we desugar r{...}!s into r(sr){...} under the assumption that
+      // the separator is likely easier to recognize than the atom. but when the
+      // separator is nullable and the atom isn't, we desugar into (rs){...}r
+      // instead, so that when `regex_differentiate` factors out an iteration
+      // from the quantifier it can fail early and cleanly
+      bool swap = sep->nullable && !atom->nullable;
+      struct regex *sep_atom =
+          regex_repeat(!swap ? regex_concat(REGEXES(sep, regex_incref(atom)))
+                             : regex_concat(REGEXES(regex_incref(atom), sep)),
+                       lower - (lower != 0), upper - !!upper);
+      atom = !swap ? regex_concat(REGEXES(atom, sep_atom))
+                   : regex_concat(REGEXES(sep_atom, atom));
+      lower = lower != 0, upper = 1;
+    }
   }
 
   parse_ws(pattern);
@@ -1780,8 +1785,8 @@ struct regex *ltre_decompile(struct dstate *dfa) {
 
         // construct /(self)*/. note that []* |- ()
         if (arrows[best_fit][best_fit])
-          bypass = regex_repeat(regex_incref(arrows[best_fit][best_fit]), 0,
-                                UINT_MAX);
+          bypass =
+              regex_repeat(regex_incref(arrows[best_fit][best_fit]), 0, false);
 
         // construct /(inbound)(self)*(outbound)/
         bypass =
