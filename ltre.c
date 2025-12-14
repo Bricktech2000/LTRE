@@ -1186,7 +1186,7 @@ bool dfa_equivalent(struct dstate *dfa1, struct dstate *dfa2) {
 //   - the returned regular expression should be `NULL`
 //   - the caller is responsible for backtracking
 
-// keep in sync with grammar.bnf
+// keep in sync with grammar.bnf and ltre.vim
 
 static int parse_ws(char **pattern) {
   while (isspace(**pattern))

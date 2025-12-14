@@ -67,5 +67,6 @@ echo '0' | bin/synth '0|1+' # 0
 echo '1' | bin/synth '0|1+' | head -c 256 # 111...
 bin/synth '((0{2}!1){2}!2){2}!3' # 010201030102010
 echo '0000a0000' | bin/synth "$(cat examples/tm.ltre)"
+cat examples/3x5\ ocr.txt | bin/synth "$(cat examples/3x5\ ocr.ltre)"
 # use `stty -icanon -echo -nl` for interactive use
 ```

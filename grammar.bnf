@@ -1,4 +1,4 @@
-# keep in sync with ltre.c
+# keep in sync with ltre.c and ltre.vim
 <regex> ::= ("!" <ws>)? <term> (("|" | "&" | "=") <ws> <regex>)?
 <term> ::= <factor>* <ws> (":" <ws> <term>)?
 <factor> ::= <atom> (<ws> ":"? ("*" | "+" | "?" | "{" <natural>? ("," <natural>?)? "}"))* ("!" <ws> <factor>)? <ws>

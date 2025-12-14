@@ -1,5 +1,8 @@
 setlocal commentstring=(\ %s\ ){}
 setlocal comments=sb:(,mb:\|,e:){}
+setlocal indentexpr=-1 indentkeys=
+
+" keep in sync with grammar.bnf and ltre.c
 
 syntax match ltreLiteralChar '[^\\\-.~\[\]<>%{}*+?:|&=!( )\x00-\x20\x7f-\xff]'
 syntax match ltreMetaEscape '\\[\\\-.~\[\]<>%{}*+?:|&=!( )]'hs=s+1
@@ -20,7 +23,7 @@ syntax match ltreWildcard '%'
 syntax match ltreDualConcat ':' " moved up for lower priority
 syntax match ltreQuantifier ':\?\([*+?]\|{\d*\(,\d*\)\?}\)!\?'
 syntax match ltreBooleanOp '[|&=!]'
-syntax region ltreComment start='(\_s' end='){}' contains=ltreTodo
+syntax region ltreComment start='(\s' end='){}' contains=ltreTodo
 syntax keyword ltreTodo TODO FIXME XXX NOTE contained
 
 highlight default link ltreLiteralChar Character
