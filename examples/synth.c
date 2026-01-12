@@ -41,11 +41,13 @@ bool run(struct dstate *dfa) {
 int main(int argc, char **argv) {
   if (argc != 2)
     fprintf(stderr, "Usage: synth <pattern>\n"), exit(EXIT_FAILURE);
+  char *pattern = argv[1];
 
-  char *error = NULL, *loc = argv[1];
+  char *error = NULL, *loc = pattern;
   struct regex *regex = ltre_parse(&loc, &error);
   if (error)
-    fprintf(stderr, "parse error: %s near '%.16s'\n", error, loc),
+    fprintf(stderr, "parse error: %s at pattern[%zu] near '%.16s'\n", error,
+            loc - pattern, loc),
         exit(EXIT_FAILURE);
 
   struct dstate *dfa = ltre_determinize(regex);

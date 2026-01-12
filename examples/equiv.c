@@ -31,7 +31,8 @@ int main(void) {
     struct regex *regex2 = ltre_parse(&loc, &error);
     if (error) {
     parse_error:
-      fprintf(stderr, "parse error: %s near '%.16s'\n", error, loc);
+      fprintf(stderr, "parse error: %s at pattern[%zu] near '%.16s'\n", error,
+              loc - line, loc);
       continue;
     }
 

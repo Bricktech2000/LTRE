@@ -167,7 +167,8 @@ int main(int argc, char **argv) {
   struct regex *regex =
       args.opts.fixed ? ltre_fixed_string(loc) : ltre_parse(&loc, &error);
   if (error)
-    fprintf(stderr, "parse error: %s near '%.16s'\n", error, loc),
+    fprintf(stderr, "parse error: %s at pattern[%zu] near '%.16s'\n",
+            error, loc - args.pattern, loc),
         exit(EXIT_ERROR);
 
   // swapping checks for `args.partial` and `args.ignore` would not affect the
