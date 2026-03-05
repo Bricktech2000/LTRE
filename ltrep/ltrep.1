@@ -169,7 +169,7 @@ To match \(lqword\(rq characters (alphanumeric characters plus the underscore),
 you might use
 .BR [\(rsm_] .
 The metacharacter
-.B .
+.B .\&
 matches any character, including newlines; to match any character except
 newlines, you might use
 .BR \(ti\(rsn .
@@ -492,6 +492,15 @@ Words some \%2-factoring of which has head
 Words all \%2-factorings of which have head
 .IR r " or tail " s .
 .TP
+.BI ! r
+.I Complement
+:: regex \-> regex
+.br
+Words not in
+.IR r .
+.br
+At most one may be applied per grouping level.
+.TP
 .IB r | s
 .I Alternation
 :: (regex, regex) \-> regex
@@ -512,15 +521,6 @@ Words in
 .br
 Words in
 .IR r " if and only if in " s .
-.TP
-.BI ! r
-.I Complement
-:: regex \-> regex
-.br
-Words not in
-.IR r .
-.br
-At most one may be applied per grouping level.
 .TP
 .BI ( r )
 .I Grouping
@@ -545,23 +545,59 @@ In decreasing order, and otherwise right associative:
 .nr pd \n(PD
 .nr PD 0
 .IP "\h'1n'\(bu" 4n
-Escapes;
+Escapes
+.BI \(rs r
+.BI \(rs +
+.BI \(rsx 41\c
+;
 .IP "\h'1n'\(bu" 4n
-Character ranges, shorthands;
+Character ranges
+.IB a \- z\c
+, shorthands
+.BI \(rs d\c
+;
 .IP "\h'1n'\(bu" 4n
-Symset complementation;
+Symset complements
+.BI \(ti u\c
+;
 .IP "\h'1n'\(bu" 4n
-Quantification, dual quantification;
+Quantification
+.IB r { 3,5 }
+.IB r *
+.IB r +
+.IB r ?\c
+, dual quantification
+.IB r :{ 3,5 }
+.IB r :*
+.IB r :+
+.IB r :?\c
+;
 .IP "\h'1n'\(bu" 4n
-Intercalation, dual intercalation;
+Intercalation
+.IB r* ! s\c
+, dual intercalation
+.IB r : * ! s\c
+;
 .IP "\h'1n'\(bu" 4n
-Concatenation;
+Concatenation
+.I rs\c
+;
 .IP "\h'1n'\(bu" 4n
-Dual concatenation;
+Dual concatenation
+.IB r : s\c
+;
 .IP "\h'1n'\(bu" 4n
-Complementation;
+Complements
+.BI ! r\c
+;
 .IP "\h'1n'\(bu" 4n
-Alternation, intersection, biconditional.
+Alternation
+.IB r | s\c
+, intersection
+.IB r & s\c
+, biconditionals
+.IB r = s\c
+\&.
 .nr PD \n(pd
 .\" don't use title case for .SS
 .SS Simple escapes
