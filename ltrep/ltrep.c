@@ -167,8 +167,8 @@ int main(int argc, char **argv) {
   struct regex *regex =
       args.opts.fixed ? ltre_fixed_string(loc) : ltre_parse(&loc, &error);
   if (error)
-    fprintf(stderr, "parse error: %s at pattern[%zu] near '%.16s'\n",
-            error, loc - args.pattern, loc),
+    fprintf(stderr, "parse error: %s at pattern[%zu] near '%.16s'\n", error,
+            loc - args.pattern, loc),
         exit(EXIT_ERROR);
 
   // swapping checks for `args.partial` and `args.ignore` would not affect the
@@ -237,7 +237,7 @@ int main(int argc, char **argv) {
       printf("%zu:", begin - line + lineoff);                                  \
     if (args.opts.inittab)                                                     \
       putchar('\t');                                                           \
-    fwrite(begin, sizeof(*begin), end - begin, stdout);                        \
+    fwrite(begin, sizeof *begin, end - begin, stdout);                         \
     args.opts.oneline ? 0 : putchar(args.opts.nulline ? '\0' : '\n');          \
   } while (0)
 

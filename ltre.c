@@ -136,8 +136,8 @@ static struct regex *regex_alloc(struct regex fields,
                                  struct regex *children[]) {
 #define regex_alloc(CHILDREN, ...)                                             \
   regex_alloc((struct regex){__VA_ARGS__}, CHILDREN)
-  size_t children_size = (regexes_len(children) + 1) * sizeof(*children);
-  struct regex *regex = malloc(sizeof(*regex) + children_size);
+  size_t children_size = (regexes_len(children) + 1) * sizeof *children;
+  struct regex *regex = malloc(sizeof *regex + children_size);
   *regex = fields, memcpy(regex->children, children, children_size);
   return regex->refcount = 1, regex;
 }
@@ -213,7 +213,7 @@ int regex_cmp(struct regex *regex1, struct regex *regex2) {
   case TYPE_COMPL:
     return regex_cmp(*regex1->children, *regex2->children);
   case TYPE_SYMSET:
-    return memcmp(regex1->symset, regex2->symset, sizeof(regex1->symset));
+    return memcmp(regex1->symset, regex2->symset, sizeof regex1->symset);
   }
 
   abort(); // should have diverged
@@ -610,7 +610,7 @@ struct regex *regex_repeat(struct regex *child, unsigned lower,
 
 struct regex *regex_symset(symset_t *symset) {
   bool empty = true, upper = true;
-  for (int i = 0; i < sizeof(*symset); i++)
+  for (int i = 0; i < sizeof *symset; i++)
     empty &= (*symset)[i] == 0x00, upper &= (*symset)[i] == 0xff;
   if (empty)
     return regex_empty(); // [] |- []
@@ -620,7 +620,7 @@ struct regex *regex_symset(symset_t *symset) {
 
   struct regex *regex = regex_alloc(REGEXES(NULL), TYPE_SYMSET, .upper = upper,
                                     .nullable = nullable);
-  memcpy(regex->symset, *symset, sizeof(*symset));
+  memcpy(regex->symset, *symset, sizeof *symset);
   return regex->size = size, regex;
 }
 
@@ -659,7 +659,7 @@ static struct regex *regex_repeat_prev(struct regex *prev, struct regex *child,
 
 static struct regex *regex_symset_prev(struct regex *prev, symset_t *symset) {
   if (prev->type == TYPE_SYMSET &&
-      memcmp(prev->symset, symset, sizeof(*symset)) == 0)
+      memcmp(prev->symset, symset, sizeof *symset) == 0)
     return regex_incref(prev);
   return regex_symset(symset);
 }
@@ -709,7 +709,7 @@ static struct regex *regex_ignorecase_ref(struct regex *regex, bool dual) {
   // it are present in the existing language
 
   struct regex *children[regexes_len(regex->children) + 1];
-  memcpy(children, regex->children, sizeof(children));
+  memcpy(children, regex->children, sizeof children);
 
   switch (regex->type) {
   case TYPE_ALT:
@@ -727,7 +727,7 @@ static struct regex *regex_ignorecase_ref(struct regex *regex, bool dual) {
                              regex->lower, regex->upper);
   case TYPE_SYMSET:;
     symset_t symset = {0};
-    memcpy(symset, regex->symset, sizeof(symset));
+    memcpy(symset, regex->symset, sizeof symset);
     for (int chr = 0; chr < 256; chr++) {
       if (symset_read(symset, chr) == !dual) {
         symset_write(symset, tolower(chr), !dual);
@@ -750,7 +750,7 @@ static struct regex *regex_reverse_ref(struct regex *regex) {
   // its argument
 
   struct regex *children[regexes_len(regex->children) + 1];
-  memcpy(children, regex->children, sizeof(children));
+  memcpy(children, regex->children, sizeof children);
 
   switch (regex->type) {
   case TYPE_ALT:
@@ -760,7 +760,7 @@ static struct regex *regex_reverse_ref(struct regex *regex) {
   case TYPE_COMPL:
     return regex_compl_prev(regex, regex_reverse_ref(*children));
   case TYPE_CONCAT:;
-    size_t children_len = sizeof(children) / sizeof(*children) - 1;
+    size_t children_len = sizeof children / sizeof *children - 1;
     for (struct regex **child = children; *child; child++)
       *child = regex_reverse_ref(
           regex->children[children + children_len - child - 1]);
@@ -791,7 +791,7 @@ static struct regex *regex_differentiate_ref(struct regex *regex, uint8_t chr) {
     return regex_incref(regex->delta); // cache hit
 
   struct regex *children[regexes_len(regex->children) + 1];
-  memcpy(children, regex->children, sizeof(children));
+  memcpy(children, regex->children, sizeof children);
 
   struct regex *delta = regex->delta ? regex->delta : regex_empty();
 
@@ -845,9 +845,9 @@ static struct regex *regex_differentiate_ref(struct regex *regex, uint8_t chr) {
   case TYPE_ALT:
   case TYPE_CONCAT:
     regex->sym_incl = true;
-    memset(regex->symset, 0xff, sizeof(regex->symset));
+    memset(regex->symset, 0xff, sizeof regex->symset);
     for (struct regex **child = regex->children; *child; child++) {
-      for (int i = 0; i < sizeof(regex->symset); i++)
+      for (int i = 0; i < sizeof regex->symset; i++)
         regex->symset[i] &=
             (*child)->symset[i] ^ (unsigned)(*child)->sym_incl - 1;
       if (regex->type == TYPE_CONCAT && !(*child)->nullable)
@@ -859,7 +859,7 @@ static struct regex *regex_differentiate_ref(struct regex *regex, uint8_t chr) {
     // child is unique so we can use a fast `memcpy` and inherit `sym_incl`
     // instead of conditionally inverting like we do above
     regex->sym_incl = (*regex->children)->sym_incl;
-    memcpy(regex->symset, (*regex->children)->symset, sizeof(regex->symset));
+    memcpy(regex->symset, (*regex->children)->symset, sizeof regex->symset);
     break;
   case TYPE_SYMSET:
     regex->sym_incl = symset_read(regex->symset, chr);
@@ -896,7 +896,7 @@ struct dstate {
 };
 
 struct dstate *dstate_alloc(struct regex *regex) {
-  struct dstate *dstate = malloc(sizeof(*dstate));
+  struct dstate *dstate = malloc(sizeof *dstate);
   *dstate = (struct dstate){.id = -1};
   // a DFA state is accepting if and only if its corresponding regular
   // expression accepts the empty word
@@ -1065,14 +1065,14 @@ void dfa_minimize(struct dstate *dfa) {
 
   int dfa_size = dfa_get_size(dfa);
   struct dstate **dstates =
-      malloc(sizeof(*dstates) * dfa_size); // VLA is 35% slower
+      malloc(sizeof *dstates * dfa_size); // VLA is 35% slower
   for (struct dstate *dstate = dfa; dstate; dstate = dstate->next)
     dstates[dstate->id] = dstate;
 
   // store distinguishability data in a symmetric matrix condensed using bitsets
   uint8_t(*dis)[(dfa_size + 7) / 8] =
-      malloc(sizeof(*dis) * dfa_size); // VLA is 35% slower
-  memset(dis, 0x00, sizeof(*dis) * dfa_size);
+      malloc(sizeof *dis * dfa_size); // VLA is 35% slower
+  memset(dis, 0x00, sizeof *dis * dfa_size);
   // abuse `symset_read` and `symset_write`
 #define ARE_DIS(ID1, ID2) symset_read(dis[ID1], ID2)
 #define MAKE_DIS(ID1, ID2)                                                     \
@@ -1266,7 +1266,7 @@ static uint8_t parse_symbol(char **pattern, char **error) {
 }
 
 static void parse_shorthand(symset_t *symset, char **pattern, char **error) {
-  memset(symset, 0x00, sizeof(*symset));
+  memset(symset, 0x00, sizeof *symset);
 
 #define RETURN_SYMSET(PRED)                                                    \
   for (int chr = 0; chr < 256; chr++)                                          \
@@ -1309,19 +1309,19 @@ static void parse_symset(symset_t *symset, char **pattern, char **error) {
   bool compl = **pattern == '~' && ++*pattern && parse_ws(pattern);
 
   if (**pattern == '.' && ++*pattern) {
-    memset(symset, 0xff, sizeof(*symset));
+    memset(symset, 0xff, sizeof *symset);
     goto process_compl;
   }
 
   if (**pattern == '[' && ++*pattern && parse_ws(pattern)) {
-    memset(symset, 0x00, sizeof(*symset));
+    memset(symset, 0x00, sizeof *symset);
     while (**pattern != ']') {
       symset_t sub;
       parse_symset(&sub, pattern, error);
       if (*error)
         return;
 
-      for (int i = 0; i < sizeof(*symset); i++)
+      for (int i = 0; i < sizeof *symset; i++)
         (*symset)[i] |= sub[i];
     }
 
@@ -1330,14 +1330,14 @@ static void parse_symset(symset_t *symset, char **pattern, char **error) {
   }
 
   if (**pattern == '<' && ++*pattern && parse_ws(pattern)) {
-    memset(symset, 0xff, sizeof(*symset));
+    memset(symset, 0xff, sizeof *symset);
     while (**pattern != '>') {
       symset_t sub;
       parse_symset(&sub, pattern, error);
       if (*error)
         return;
 
-      for (int i = 0; i < sizeof(*symset); i++)
+      for (int i = 0; i < sizeof *symset; i++)
         (*symset)[i] &= sub[i];
     }
 
@@ -1365,7 +1365,7 @@ static void parse_symset(symset_t *symset, char **pattern, char **error) {
   }
 
   upper++; // open upper bound
-  memset(symset, 0x00, sizeof(*symset));
+  memset(symset, 0x00, sizeof *symset);
   uint8_t chr = lower;
   do // character range wraparound
     symset_write(*symset, chr, true);
@@ -1374,7 +1374,7 @@ static void parse_symset(symset_t *symset, char **pattern, char **error) {
 
 process_compl:
   if (compl )
-    for (int i = 0; i < sizeof(*symset); i++)
+    for (int i = 0; i < sizeof *symset; i++)
       (*symset)[i] = ~(*symset)[i];
   parse_ws(pattern);
   return;
@@ -1710,7 +1710,7 @@ struct regex *ltre_decompile(struct dstate *dfa) {
   int dfa_size = dfa_get_size(dfa);
   // also create an auxiliary state and store it at index `dfa_size`
   struct regex *(*arrows)[dfa_size + 1] =
-      malloc(sizeof(*arrows) * (dfa_size + 1)); // VLA is 20% slower
+      malloc(sizeof *arrows * (dfa_size + 1)); // VLA is 20% slower
   for (int id = 0; id <= dfa_size; id++)
     arrows[dfa_size][id] = arrows[id][dfa_size] = NULL;
 
