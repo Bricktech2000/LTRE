@@ -42,6 +42,9 @@ man -l ltrep/ltrep.1 # displays man page
 bin/ltrep -Hnko '"(~[\\"]|\\.)*"' ltrep/ltrep.c ltre.c
 bin/ltrep -bz '[\p\s]{4,}' bin/ltrep | tr '\0\n' '\n\0'
 bin/ltrep -1l "$(cat ltrep/yara.ltre)" bin/* # bin/ltrep
+ltrep -H1oc '\n'   ltrep/ltrep.c ltre.c # wc -l
+ltrep -H1oc '\S\s' ltrep/ltrep.c ltre.c # wc -w
+ltrep -H1oc '.'    ltrep/ltrep.c ltre.c # wc -c
 ```
 
 To build and run the regex complementation tool:

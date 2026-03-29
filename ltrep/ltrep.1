@@ -65,13 +65,13 @@ Partial match; print lines that contain a match.
 Overrides
 .BR \-o .
 .TP
-.B \-o
+.BR \-o / \-x
 Match only; print the matches, not the lines.
 .br
 Matches may overlap so the output size may be quadratic in the input size.
 .br
 Overrides
-.BR \-p / \-x .
+.BR \-p .
 .TP
 .BR \-i / \-s
 Ignore case; match case-insensitively.
@@ -79,13 +79,13 @@ Ignore case; match case-insensitively.
 Overrides
 .BR \-S .
 .TP
-.B \-S
+.BR \-S / \-s
 Smart case; set
 .B \-i
 if pattern is all-lowercase.
 .br
 Overrides
-.BR \-i / \-s .
+.BR \-i .
 .TP
 .BR \-F / \-E
 Parse the pattern as a fixed string, not a regex.
@@ -107,12 +107,21 @@ Prefix matches with a \(rst so they line up.
 .TP
 .B \-c
 Only print a count of matching lines per file.
+.br
+Overrides
+.BR \-l " and " \-L .
 .TP
 .B \-l
 Only print a list of files containing matches.
+.br
+Overrides
+.BR \-c " and " \-L .
 .TP
 .B \-L
 Only print a list of files containing no matches.
+.br
+Overrides
+.BR \-c " and " \-l .
 .TP
 .B \-0
 Terminate all file names with \(rs0, not : or \(rsn.
@@ -123,11 +132,11 @@ Use line terminator \(rs0 for input and output data.
 Overrides
 .BR \-1 .
 .TP
-.B \-1
+.BR \-1 / \-Z
 Use no line terminator for input and output data.
 .br
 Overrides
-.BR \-z / \-Z .
+.BR \-z .
 .TP
 .B \-q
 Produce no output and prioritize exit status 0.
@@ -212,7 +221,7 @@ Symbol associated with the simple escape
 .B \(rs\c
 .IR r .
 .br
-Available simple escapes are listed further below.
+Available simple escapes are listed in a following section.
 .TP
 .BI \(rsx 41
 .I Hexadecimal Escape
@@ -255,7 +264,7 @@ Set of characters in the shorthand
 .B \(rs\c
 .IR d .
 .br
-Available shorthands are listed further below.
+Available shorthands are listed in a following section.
 .TP
 .BI \(ti u
 .I Symset Complement
@@ -799,6 +808,27 @@ and print their offset into the file:
 39162:LTREP 0.3
 39173:%s%c
 \&...
+.EE
+.in
+.PP
+Output newline, word and byte count for a set of files, similarly to
+.BR wc (1):
+.PP
+.in +4n
+.EX
+.RB "$ " "ltrep \-H1oc \(aq\(rsn\(aq ltrep/ltrep.c ltre.c"
+ltrep/ltrep.c:416
+ltre.c:1819
+.EE
+.EX
+.RB "$ " "ltrep \-H1oc \(aq\(rsS\(rss\(aq ltrep/ltrep.c ltre.c"
+ltrep/ltrep.c:2380
+ltre.c:8274
+.EE
+.EX
+.RB "$ " "ltrep \-H1oc \(aq.\(aq ltrep/ltrep.c ltre.c"
+ltrep/ltrep.c:19961
+ltre.c:63773
 .EE
 .in
 .
