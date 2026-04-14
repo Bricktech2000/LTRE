@@ -762,6 +762,68 @@ int main(void) {
   test(UTF8_CHARS_SOME, "\xc2\x7f", false);     // bad tail
   test(UTF8_CHARS_SOME, "\xe2\x28\xa1", false); // bad tail
   test(UTF8_CHARS_SOME, "\x80x/", false);
+  // RFC 3339, $5.6 'Internet Date/Time Format' and $5.7 'Restrictions'. to
+  // forbid lowercase 'T' and 'Z' or to allow different date--time separators,
+  // edit `TSEP` and `ZULU`. we unconditionally accept a seconds value of
+  // '60', intended for denoting leap seconds, because leap seconds happen
+  // simultaneously around the globe and validating them across timezones
+  // requires thousands of DFA states
+#define TSEP "[Tt]" // "{}T"
+#define ZULU "[Zz]" // "{}Z"
+#define HOUR "(0-1\\d|20-3)"
+#define MIN "0-5\\d"
+#define SEC "(0-5\\d|60)"
+#define FULL_TIME                                                              \
+  HOUR "\\:" MIN "\\:" SEC "(\\.\\d+)?([\\+\\-]" HOUR "\\:" MIN "|" ZULU ")"
+#define DIV4 "([02468][048]|[13579][26])"
+#define LEAP_YEAR "(" DIV4 "00|!\\d\\d00&\\d\\d" DIV4 ")"
+#define FULL_DATE                                                              \
+  "(\\d{4}\\-((0[13578]|1[02])\\-(01-9|1-2\\d|30-1)|(0[469]|11)\\-"            \
+  "(01-9|1-2\\d|30)|02\\-(01-9|1\\d|20-8))|" LEAP_YEAR "\\-02\\-29)"
+#define RFC3339 FULL_DATE TSEP FULL_TIME
+  test(RFC3339, "1985-04-12T23:20:50.52Z", true);      // RFC ex.
+  test(RFC3339, "1996-12-19T16:39:57-08:00", true);    // RFC ex.
+  test(RFC3339, "1996-12-20T00:39:57Z", true);         // RFC ex.
+  test(RFC3339, "1990-12-31T23:59:60Z", true);         // RFC ex.
+  test(RFC3339, "1990-12-31T15:59:60-08:00", true);    // RFC ex.
+  test(RFC3339, "1937-01-01T12:00:27.87+00:20", true); // RFC ex.
+  test(RFC3339, "1900-02-29T00:00:00Z", false);
+  test(RFC3339, "2000-02-29T00:00:00Z", true);
+  test(RFC3339, "2001-02-29T00:00:00Z", false);
+  test(RFC3339, "2002-02-29T00:00:00Z", false);
+  test(RFC3339, "2004-02-29T00:00:00Z", true);
+  test(RFC3339, "0000-02-30T00:00:00Z", false);
+  test(RFC3339, "0000-04-30T00:00:00Z", true);
+  test(RFC3339, "0000-04-31T00:00:00Z", false);
+  test(RFC3339, "0000-12-31T00:00:00Z", true);
+  test(RFC3339, "0000-00-00T00:00:00Z", false);
+  test(RFC3339, "0000-00-01T00:00:00Z", false);
+  test(RFC3339, "0000-01-00T00:00:00Z", false);
+  test(RFC3339, "0000-01-01T00:00:00Z", true);
+  test(RFC3339, "0000-01-01t00:00:00z", true);
+  test(RFC3339, "0000-01-01 00:00:00Z", false);
+  test(RFC3339, "0000-01-01T00:00:00", false);
+  test(RFC3339, "1970-01-01T00:00:00Z", true);
+  test(RFC3339, "1970-01-01T00:00:00+00:00", true);
+  test(RFC3339, "1970-01-01T00:00:00-00:00", true);
+  test(RFC3339, "1970-01-01T00:00:00+0000", false);
+  // RFC 9110, $8.8.3 'ETag'
+#define ETAG "(W/)?\"<\\C\\S~\">*\""
+  test(ETAG, "", false);
+  test(ETAG, "W/", false);
+  test(ETAG, "\"xyzzy\"", true);   // RFC ex.
+  test(ETAG, "W/\"xyzzy\"", true); // RFC ex.
+  test(ETAG, "\"\"", true);        // RFC ex.
+  test(ETAG, "\"r\x80s\xfft\"", true);
+  test(ETAG, "xyzzy", false);
+  test(ETAG, "W/xyzzy", false);
+  test(ETAG, "w/\"xyzzy\"", false);
+  test(ETAG, "\"xyzzy\" ", false);
+  test(ETAG, "\"xyzzy", false);
+  test(ETAG, "\"xy zzy\"", false);
+  test(ETAG, "\"xy\nzzy\"", false);
+  test(ETAG, "\"xy\"zzy\"", false);
+  test(ETAG, "\"xy\\\"zzy\"", false);
   // IPv4 addresses in dot-decimal notation
 #define IPV4 "(250-5|(20-4|1\\d|1-9?)\\d){4}!\\."
   test(IPV4, "0.0.0.0", true);
