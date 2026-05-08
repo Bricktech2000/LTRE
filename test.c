@@ -692,14 +692,14 @@ int main(void) {
   test(JSON_TEXT, "{ num: 123 }", false);
   test(JSON_TEXT, "[\"foo\", { \"bar\": 123 }, [true]]", true);
   test(JSON_TEXT, "[\"foo\", { \"bar\": 123 }, [true], baz]", false);
-  test(JSON_TEXT, "{ \"null\": null, \"true\": true, \"\\\"str\\\"\": \"str\"}",
-       true);
+  test(JSON_TEXT, //
+       "{ \"null\": null, \"true\": true, \"\\\"str\\\"\": \"str\"}", true);
   test(JSON_TEXT, "{ \"a\": 0.1, \"b\": 0.2, \"a\": 0.3 }", true);
   test(JSON_TEXT, "[\"abc\", \"\\u0000\", \"ab\\u0000c\"]", true);
-  test(JSON_TEXT,
+  test(JSON_TEXT, //
        "{ \"size\": { \"width\": 800, \"height\": 600, \"depth\": 4 } }", true);
-  test(JSON_TEXT, "{ \"size\": { \"width\": \"800\", \"height\": 600 } }",
-       true);
+  test(JSON_TEXT, //
+       "{ \"size\": { \"width\": \"800\", \"height\": 600 } }", true);
   test(JSON_TEXT, "{ \"size\": [] }", true);
   test(JSON_TEXT, "[\"foo\", \"bar\"]", true);
   test(JSON_TEXT, "{ \"name\": \"John\", \"birth\": 1978 }", true);
@@ -711,9 +711,9 @@ int main(void) {
 #define BYTE_PAT                                                               \
   "(\\z|\\xc0-\\xdf\\x80-\\xbf{1}|\\xe0-\\xef\\x80-\\xbf{2}|"                  \
   "\\xf0-\\xf7\\x80-\\xbf{3})"
-#define OVERLONG "(\\xc0-\\xc1.|\\xe0\\x80-\\x9f.|\\xf0\\x80-\\x8f..)"
+#define OVERLONG "(\\xc0-\\xc1.|\\xe0\\x00-\\x9f.|\\xf0\\x00-\\x8f..)"
 #define SURROGATE "\\xed\\xa0-\\xbf."
-#define TOO_BIG "(\\xf4\\x90-\\xff\\x80-\\xbf{2}|\\xf5-\\xff\\x80-\\xbf{3})"
+#define TOO_BIG "(\\xf4\\x90-\\xff..|\\xf5-\\xff...)"
 #define UTF8_CHAR_1 "(" BYTE_PAT "&!" OVERLONG "&!" SURROGATE "&!" TOO_BIG ")"
   // RFC 3629, $4 'Syntax of UTF-8 Byte Sequences'. direct transcription of ABNF
 #define UTF8_1 "\\x00-\\x7f"
@@ -948,8 +948,8 @@ int main(void) {
   test(SEMVER, "1.2.3----R-S.12.9.1--.12+meta", true);
   test(SEMVER, "1.2.3----RC-SNAPSHOT.12.9.1--.12", true);
   test(SEMVER, "1.0.0+0.build.1-rc.10000aaa-kk-0.1", true);
-  test(SEMVER, "99999999999999999999999.999999999999999999.99999999999999999",
-       true);
+  test(SEMVER, //
+       "99999999999999999999999.999999999999999999.99999999999999999", true);
   test(SEMVER, "1.0.0-0A.is.legal", true);
   test(SEMVER, "1", false);
   test(SEMVER, "1.2", false);
@@ -990,7 +990,7 @@ int main(void) {
   test(SEMVER, "+justmeta", false);
   test(SEMVER, "9.8.7+meta+meta", false);
   test(SEMVER, "9.8.7-whatever+meta+meta", false);
-  test(SEMVER,
+  test(SEMVER, //
        "99999999999999999999999.999999999999999999.99999999999999999"
        "----RC-SNAPSHOT.12.09.1--------------------------------..12",
        false);

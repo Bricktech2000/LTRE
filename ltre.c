@@ -261,10 +261,6 @@ static size_t regex_fmt_len(struct regex *regex, enum regex_type prec) {
     return 2;
   if (regex == regex_univ())
     return 1;
-  if (regex == regex_eps())
-    return 2;
-  if (regex == regex_negeps())
-    return 3;
 
   size_t len = regex->type < prec; // (
 
@@ -956,7 +952,7 @@ struct dstate *dfa_dump(struct dstate *dfa) {
 
 static void leb128_put(uint8_t **p, int n) {
   while (n >> 7)
-    *(*p)++ = (n & 0x7f) | 0x80, n >>= 7;
+    *(*p)++ = n & 0x7f | 0x80, n >>= 7;
   *(*p)++ = n;
 }
 
@@ -1047,7 +1043,7 @@ void dfa_mark(struct dstate *dfa) {
   // only if all its transitions are terminating and have the same `accepting`
   // value as that state. to avoid having to deal with cycles, we default to all
   // states being terminating then iteratively rule out the ones that aren't.
-  for (bool done = false; done = !done;)
+  for (bool done = false; --done;)
     for (struct dstate *dstate = dfa; dstate; dstate = dstate->next)
       if (dstate->terminating)
         for (int chr = 0; chr < 256; chr++)
@@ -1088,7 +1084,7 @@ void dfa_minimize(struct dstate *dfa) {
     for (struct dstate *ds2 = ds1->next; ds2; ds2 = ds2->next)
       if (ds1->accepting != ds2->accepting)
         MAKE_DIS(ds1->id, ds2->id);
-  for (bool done = false; done = !done;)
+  for (bool done = false; --done;)
     for (int id1 = 0; id1 < dfa_size; id1++)
       for (int id2 = id1 + 1; id2 < dfa_size; id2++)
         if (!ARE_DIS(id1, id2))
@@ -1099,8 +1095,10 @@ void dfa_minimize(struct dstate *dfa) {
               // `ds1` and `ds2` have not been marked distinguishable so far, so
               // the 'were both states assumed indistinguishable' bit is covered
               if (ARE_DIS(dstates[id1]->transitions[chr]->id,
-                          dstates[id2]->transitions[chr]->id))
-                MAKE_DIS(id1, id2), done = false, chr = 256;
+                          dstates[id2]->transitions[chr]->id)) {
+                MAKE_DIS(id1, id2), done = false;
+                break;
+              }
 
   // minimize the DFA by merging indistinguishable states. no need to prune
   // unreachable states because the construction used by `ltre_determinize`
@@ -1472,7 +1470,7 @@ next_quant:
     goto next_quant;
   }
 
-  *pattern -= dual, dual = false; // do not consume ':'
+  *pattern -= dual, dual = false; // don't consume ':' if no quantifier follows
 
   if (**pattern == '!' && ++*pattern && parse_ws(pattern)) {
     struct regex *sep = parse_factor(pattern, error);
