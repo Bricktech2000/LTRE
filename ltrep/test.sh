@@ -1,4 +1,4 @@
-# when updating the test suite make sure to <c-v> ... r0gvg<c-a>
+# when updating the test suite make sure to <C-V> ... r0gvg<C-A>
 
 rm test.act
 true
