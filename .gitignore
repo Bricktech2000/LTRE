@@ -1,3 +1,8 @@
-bin/
-.clangd
-test.act
+/ltrep
+/compl
+/equiv
+/synth
+/test
+/ltre.o
+
+/ltrep_/test.act

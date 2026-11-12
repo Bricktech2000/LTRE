@@ -17,7 +17,7 @@ LTRE is a regular expression library written in C99 that has no dependencies but
                            ltre_matches_lazy                ltre_matches
 ```
 
-For sample regular expressions, see the test suite [test.c](test.c). For a more realistic use-case, see the small command-line search tool [ltrep/ltrep.c](ltrep/ltrep.c). For demos of of DFA decompilation and equivalence, see the regex complementation tool [examples/compl.c](examples/compl.c) and the regex equivalence tool [examples/equiv.c](examples/equiv.c). For generating matching strings from a regular expression, see the string synthesis tool [examples/synth.c](examples/synth.c).
+For sample regular expressions, see the test suite [test.c](test.c). For a more realistic use-case, see the small command-line search tool [ltrep_/ltrep.c](ltrep_/ltrep.c). For demos of of DFA decompilation and equivalence, see the regex complementation tool [examples/compl.c](examples/compl.c) and the regex equivalence tool [examples/equiv.c](examples/equiv.c). For generating matching strings from a regular expression, see the string synthesis tool [examples/synth.c](examples/synth.c).
 
 See [patterns.md](patterns.md) and [grammar.bnf](grammar.bnf) for documentation on regular expression strings.
 
@@ -26,50 +26,50 @@ See [patterns.md](patterns.md) and [grammar.bnf](grammar.bnf) for documentation 
 To build and run the test suite:
 
 ```sh
-make bin/test
-bin/test # should have no output
+make test
+./test # should have no output
 ```
 
 To build and run the command-line search tool:
 
-<!-- keep in sync with ltrep/ltrep.1 -->
+<!-- keep in sync with ltrep_/ltrep.1 -->
 
 ```sh
-make bin/ltrep
-sh -c 'cd ltrep/ && sh test.sh ../bin/ltrep' # no output
-bin/ltrep -h # displays help
-man -l ltrep/ltrep.1 # displays man page
-bin/ltrep -Hnko '"(~[\\"]|\\.)*"' ltrep/ltrep.c ltre.c
-bin/ltrep -bz '[\p\s]{4,}' bin/ltrep | tr '\0\n' '\n\0'
-bin/ltrep -1l "$(cat ltrep/yara.ltre)" bin/* # bin/ltrep
-ltrep -H1oc '\n'   ltrep/ltrep.c ltre.c # wc -l
-ltrep -H1oc '\S\s' ltrep/ltrep.c ltre.c # wc -w
-ltrep -H1oc '.'    ltrep/ltrep.c ltre.c # wc -c
+make ltrep
+sh -c 'cd ltrep_/ && sh test.sh ../ltrep' # no output
+./ltrep -h # displays help
+man -l ltrep_/ltrep.1 # displays man page
+./ltrep -Hnko '"(~[\\"]|\\.)*"' ltrep_/ltrep.c ltre.c
+./ltrep -bz '[\p\s]{4,}' ltrep | tr '\0\n' '\n\0'
+./ltrep -1l "$(cat ltrep_/yara.ltre)" * # ltrep
+./ltrep -H1oc '\n'   ltrep_/ltrep.c ltre.c # wc -l
+./ltrep -H1oc '\S\s' ltrep_/ltrep.c ltre.c # wc -w
+./ltrep -H1oc '.'    ltrep_/ltrep.c ltre.c # wc -c
 ```
 
 To build and run the regex complementation tool:
 
 ```sh
-make bin/compl
-echo 'abc' | bin/compl # |a|ab|(~a|a~b|ab(~c|c.))%
+make compl
+echo 'abc' | ./compl # |a|ab|(~a|a~b|ab(~c|c.))%
 ```
 
 To build and run the regex equivalence tool:
 
 ```sh
-make bin/equiv
-echo -e '0-9+&!0.+\t0|1-90-9*' | bin/equiv # equivalent
-echo -e '(a+b*)*\t(a*b+)*' | bin/equiv # not equivalent
+make equiv
+echo -e '0-9+&!0.+\t0|1-90-9*' | ./equiv # equivalent
+echo -e '(a+b*)*\t(a*b+)*' | ./equiv # not equivalent
 ```
 
 To build and run the string synthesis tool:
 
 ```sh
-make bin/synth
-echo '0' | bin/synth '0|1+' # 0
-echo '1' | bin/synth '0|1+' | head -c 256 # 111...
-bin/synth '((0{2}!1){2}!2){2}!3' # 010201030102010
-echo '0000a0000' | bin/synth "$(cat examples/tm.ltre)"
-cat examples/3x5\ ocr.txt | bin/synth "$(cat examples/3x5\ ocr.ltre)"
+make synth
+echo '0' | ./synth '0|1+' # 0
+echo '1' | ./synth '0|1+' | head -c 256 # 111...
+./synth '((0{2}!1){2}!2){2}!3' # 010201030102010
+echo '0000a0000' | ./synth "$(cat examples/tm.ltre)"
+cat examples/3x5\ ocr.txt | ./synth "$(cat examples/3x5\ ocr.ltre)"
 # use `stty -icanon -echo -nl` for interactive use
 ```

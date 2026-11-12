@@ -2,7 +2,7 @@
 .\" see man-pages(7) for a style guide. also, always inspect the output of
 .\" `groff -man -Tpdf ltrep.1` and make sure the right glyphs get produced,
 .\" especially hyphens, dashes, quotes, apostrophes, tildes and carets.
-.TH LTREP 1 2026-03-28 "LTREP 0.3" "User Commands"
+.TH LTREP 1 2026-11-11 "LTREP 0.3" "User Commands"
 .SH NAME
 .\" don't use an em dash here
 LTREP \- print lines matching a pattern
@@ -783,11 +783,11 @@ print their line and column numbers:
 .in +4n
 .EX
 .RB "$ " "ltrep \-Hnko \(aq\(dq(\(ti[\(rs\(rs\(dq]|\(rs\(rs.)*\(dq\(aq \c"
-.B "ltrep/ltrep.c ltre.c"
-ltrep/ltrep.c:1:10:\(dqltre.h\(dq
-ltrep/ltrep.c:19:14:\(dqv pxo isS FEHhnNkKb Ttc l L 0 zZq \(dq
-ltrep/ltrep.c:65:13:\(dqLTREP 0.3\(rsn\(dq
-ltrep/ltrep.c:66:14:\(dqLTREP --- print lines matching a pattern\(rsn\(dq
+.B "ltrep_/ltrep.c ltre.c"
+ltrep_/ltrep.c:1:10:\(dqltre.h\(dq
+ltrep_/ltrep.c:19:14:\(dqv pxo isS FEHhnNkKb Ttc l L 0 zZq \(dq
+ltrep_/ltrep.c:65:13:\(dqLTREP 0.3\(rsn\(dq
+ltrep_/ltrep.c:66:14:\(dqLTREP --- print lines matching a pattern\(rsn\(dq
 \&...
 .EE
 .in
@@ -799,7 +799,7 @@ and print their offset into the file:
 .PP
 .in +4n
 .EX
-.RB "$ " "ltrep \-bz \(aq[\(rsp\(rss]{4,}\(aq bin/ltrep | \c"
+.RB "$ " "ltrep \-bz \(aq[\(rsp\(rss]{4,}\(aq ltrep | \c"
 .B "tr \(aq\(rs0\(rsn\(aq \(aq\(rsn\(rs0\(aq"
 \&...
 39040:parse error: %s at pattern[%zu] near \(aq%.16s\(aq
@@ -816,18 +816,18 @@ Output newline, word and byte count for a set of files, similarly to
 .PP
 .in +4n
 .EX
-.RB "$ " "ltrep \-H1oc \(aq\(rsn\(aq ltrep/ltrep.c ltre.c"
-ltrep/ltrep.c:416
+.RB "$ " "ltrep \-H1oc \(aq\(rsn\(aq ltrep_/ltrep.c ltre.c"
+ltrep_/ltrep.c:416
 ltre.c:1819
 .EE
 .EX
-.RB "$ " "ltrep \-H1oc \(aq\(rsS\(rss\(aq ltrep/ltrep.c ltre.c"
-ltrep/ltrep.c:2380
+.RB "$ " "ltrep \-H1oc \(aq\(rsS\(rss\(aq ltrep_/ltrep.c ltre.c"
+ltrep_/ltrep.c:2380
 ltre.c:8274
 .EE
 .EX
-.RB "$ " "ltrep \-H1oc \(aq.\(aq ltrep/ltrep.c ltre.c"
-ltrep/ltrep.c:19961
+.RB "$ " "ltrep \-H1oc \(aq.\(aq ltrep_/ltrep.c ltre.c"
+ltrep_/ltrep.c:19961
 ltre.c:63773
 .EE
 .in
