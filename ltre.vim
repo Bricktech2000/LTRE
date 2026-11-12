@@ -1,6 +1,5 @@
 setlocal commentstring=(\ %s\ ){}
 setlocal comments=sb:(,mb:\|,e:){}
-setlocal indentexpr=-1 indentkeys=
 
 " keep in sync with grammar.bnf and ltre.c
 
